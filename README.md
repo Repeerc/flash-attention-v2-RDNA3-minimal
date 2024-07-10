@@ -97,7 +97,9 @@ PyTorch 2.2.1 + CU118 ZLUDA, Python 3.10
 
 ### FP16, causal = False
 
-Triton git hash: 47fc046ff29c9ea2ee90e987c39628a540603c8f
+Triton build from: https://github.com/triton-lang/triton
+
+git hash: 47fc046ff29c9ea2ee90e987c39628a540603c8f
 
 Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in triton)
 
