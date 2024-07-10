@@ -95,32 +95,22 @@ GPU: 7900xtx (gfx1100)
 
 PyTorch 2.2.1 + CU118 ZLUDA, Python 3.10
 
-### FP16, causal = True
-
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/388dacdb-37ac-4067-b134-48f528831947)
-
-![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/7567f295-f235-4079-b886-8cd6c0af3488)
-
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/94a0a287-2670-40d7-b0ec-75364b64b214)
-
-
 ### FP16, causal = False
-
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/975ba7fb-e608-42a1-9e68-e3a63c1a8850)
-
-![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/cca58005-a3d6-4d9e-b15d-9c4848f2ebbe)
-
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/859ccd5a-55fe-40d7-9703-341b235129f0)
-
-### FP16, causal = False, Compare with Triton
 
 Triton git hash: 47fc046ff29c9ea2ee90e987c39628a540603c8f
 
-Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128)
+Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in triton)
 
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/eb33269c-e4bf-426d-83f3-f86616696183)
+![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8d32fc5a-0082-4f48-b8e1-4acd14dc8a6f)
 
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/9803123f-913d-40ff-9ff4-f8abe789684c)
+![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/1b9655a4-fdd5-40e4-9174-37ad18d20cae)
 
-![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/7d446c06-cc2b-48ed-9121-c15035b744ea)
+![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/b533c016-e2c1-44b9-be2c-7cf80b44e5f6)
+
+### FP16, causal = True
+
+![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8a1ab599-6462-4f35-ac56-3f369b2443a4)
+
+![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/b70becdf-0e4f-4065-a455-f09829c0476e)
+
 
