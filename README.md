@@ -99,7 +99,7 @@ PyTorch 2.2.1 + CU118 ZLUDA, Python 3.10
 
 Triton build from: https://github.com/triton-lang/triton
 
-git hash: 47fc046ff29c9ea2ee90e987c39628a540603c8f
+git hash: [47fc046ff29c9ea2ee90e987c39628a540603c8f](https://github.com/triton-lang/triton/tree/47fc046ff29c9ea2ee90e987c39628a540603c8f)
 
 test use Triton windows pre-build version: https://github.com/Repeerc/triton-windows-amdgpu
 
