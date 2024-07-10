@@ -299,7 +299,7 @@ fwd_kernel(
 }
 // =================================================================================
 
-#define GRAD_SCALE 0.95
+#define GRAD_SCALE 0.45
 
 __global__ void
 bwd_kernel(
@@ -399,7 +399,7 @@ bwd_kernel(
         __syncthreads();
 
         mul_add_kAT_B(Pi, dOi, dVj, Bc, d, Br, 1.0 * GRAD_SCALE); // Pi[Br x Bc] dOi[Br x d]
-        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 1.0);                  // dPj:[Br x Bc]
+        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 1.0);                  // dPi:[Br x Bc]
 
         if (tx < Br)
         {
