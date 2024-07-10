@@ -101,6 +101,8 @@ Triton build from: https://github.com/triton-lang/triton
 
 git hash: 47fc046ff29c9ea2ee90e987c39628a540603c8f
 
+test use Triton windows pre-build version: https://github.com/Repeerc/triton-windows-amdgpu
+
 Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in triton)
 
 ![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8d32fc5a-0082-4f48-b8e1-4acd14dc8a6f)
