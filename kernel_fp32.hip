@@ -10,9 +10,9 @@
 #define TORCH_DTYPE torch::kFloat32
 
 
-const int ROCWMMA_M = 32;
-const int ROCWMMA_N = 32;
-const int ROCWMMA_K = 16;
+const int MMA_M = 32;
+const int MMA_N = 32;
+const int MMA_K = 16;
 
 const int N_WAVES = 32;
 const int WAVE_SIZE = 32;
@@ -29,23 +29,23 @@ __device__ void mul_add_kAT_B(
     const int wave_id = (threadIdx.x / WAVE_SIZE);
     const int lane_id = (threadIdx.x % WAVE_SIZE);
 
-    for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
+    for (int wave_off = 0; wave_off < ((m * n) / (MMA_M * MMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
         int wave_xy = wave_id + wave_off * N_WAVES;
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = wave_xy % (n / MMA_N);
+        int wave_y = wave_xy / (n / MMA_N);
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = wave_x * MMA_N;
+        int blk_y = wave_y * MMA_M;
 
         if ((blk_x < n) && (blk_y < m))
         {
-#pragma unroll ROCWMMA_N
-            for (int col = 0; col < ROCWMMA_N; col++)
+#pragma unroll MMA_N
+            for (int col = 0; col < MMA_N; col++)
             {
                 float sum = C[(blk_y + lane_id) * n + blk_x + col];
-#pragma unroll ROCWMMA_K
+#pragma unroll MMA_K
                 for (int i = 0; i < k; i++)
                 {
                     sum += A[i * m + (blk_y + lane_id)] * B[(i)*n + (blk_x + col)];
@@ -68,23 +68,23 @@ __device__ void mul_kA_BT(
     const int wave_id = (threadIdx.x / WAVE_SIZE);
     const int lane_id = (threadIdx.x % WAVE_SIZE);
 
-    for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
+    for (int wave_off = 0; wave_off < ((m * n) / (MMA_M * MMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
         int wave_xy = wave_id + wave_off * N_WAVES;
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = wave_xy % (n / MMA_N);
+        int wave_y = wave_xy / (n / MMA_N);
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = wave_x * MMA_N;
+        int blk_y = wave_y * MMA_M;
 
         if ((blk_x < n) && (blk_y < m))
         {
-#pragma unroll ROCWMMA_N
-            for (int col = 0; col < ROCWMMA_N; col++)
+#pragma unroll MMA_N
+            for (int col = 0; col < MMA_N; col++)
             {
                 float sum = 0.0;
-#pragma unroll ROCWMMA_K
+#pragma unroll MMA_K
                 for (int i = 0; i < k; i++)
                 {
                     sum += A[(blk_y + lane_id) * k + (i)] * B[(blk_x + col) * k + (i)];
@@ -107,22 +107,22 @@ __device__ void mul_add_kA_B(
     const int wave_id = (threadIdx.x / WAVE_SIZE);
     const int lane_id = (threadIdx.x % WAVE_SIZE);
 
-    for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
+    for (int wave_off = 0; wave_off < ((m * n) / (MMA_M * MMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
         int wave_xy = wave_id + wave_off * N_WAVES;
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = wave_xy % (n / MMA_N);
+        int wave_y = wave_xy / (n / MMA_N);
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = wave_x * MMA_N;
+        int blk_y = wave_y * MMA_M;
         if ((blk_x < n) && (blk_y < m))
         {
-#pragma unroll ROCWMMA_N
-            for (int col = 0; col < ROCWMMA_N; col++)
+#pragma unroll MMA_N
+            for (int col = 0; col < MMA_N; col++)
             {
                 float sum = C[(blk_y + lane_id) * n + blk_x + col];
-#pragma unroll ROCWMMA_K
+#pragma unroll MMA_K
                 for (int i = 0; i < k; i++)
                 {
                     sum += A[(blk_y + lane_id) * k + (i)] * B[(i)*n + (blk_x + col)];

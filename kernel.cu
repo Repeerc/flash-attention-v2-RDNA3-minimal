@@ -198,6 +198,7 @@ fwd_kernel(
     const int L_offset = (blockIdx.x + blockIdx.y * gridDim.x) * nq;
 
     const int Tr_i = blockIdx.z;
+    const int ele_y = Tr_i * Br;
     const int tx = threadIdx.x;
 
     extern __shared__ ComputeType sram[];
@@ -228,13 +229,16 @@ fwd_kernel(
 
         ComputeType *__restrict__ Kj = &k[kv_offset + j * Bc * d];
         ComputeType *__restrict__ Vj = &v[kv_offset + j * Bc * d];
+        int ele_x = j * Bc;
 
-        mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
+        if(causal){
+            if (ele_y >= ele_x)
+                mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
+        }else
+            mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
 
         if(causal)
         {
-            int ele_y = Tr_i * Br;
-            int ele_x = j * Bc;
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
             {
 #pragma unroll 32
@@ -324,6 +328,7 @@ bwd_kernel(
     const int L_offset = (blockIdx.x + blockIdx.y * gridDim.x) * nq;
 
     const int Tc_j = blockIdx.z;
+    const int ele_x = Tc_j * Bc;
     const int tx = threadIdx.x;
 
     extern __shared__ ComputeType sram[];
@@ -363,12 +368,17 @@ bwd_kernel(
         float32_t *__restrict__ Li = &L[L_offset + Tr_i * Br];         // [Br]
         float32_t *__restrict__ Di_i = &Di[L_offset + Tr_i * Br];
 
-        mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
+    
+        int ele_y = Tr_i * Br;
+
+        if(causal){
+            if (ele_y >= ele_x)
+                mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
+        }else
+            mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d] 
 
         if(causal)
         {
-            int ele_y = Tr_i * Br;
-            int ele_x = Tc_j * Bc;
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
             {
 #pragma unroll 32

@@ -113,8 +113,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 #Nkv = 227
 
 
-(B, H, N, D) = 1, 20, 567, 64
-Nkv = 344
+(B, H, N, D) = 1, 20, 512, 64
+Nkv = 512
 
 dtype = torch.float16
 ref_sdp_dtype = torch.float16

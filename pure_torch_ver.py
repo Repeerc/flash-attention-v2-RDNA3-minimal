@@ -99,7 +99,7 @@ class FlashAttentionFunction(torch.autograd.Function):
         #Bc = 512
         do = pad_to_multiple(do, Br, 2)
         
-        k[:,:,Nkv:,:] = 0
+        k[:,:,Nkv:,:] = -1
 
         dQ = torch.zeros_like(q)
         dK = torch.zeros_like(k)
@@ -159,8 +159,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 (B, H, NQ, D) = 1, 10, 1024, 64
 NKV = NQ
 
-dtype = torch.float32
-causal = True
+dtype = torch.float16
+causal = False
 
 if __name__ == "__main__":
     q = torch.rand((B, H, NQ, D), dtype=dtype, device="cuda")   # * 5
