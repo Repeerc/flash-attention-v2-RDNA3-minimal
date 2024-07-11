@@ -120,7 +120,7 @@ class FlashAttentionFunction(torch.autograd.Function):
         Tr = len(q_frags)
         Tc = len(k_frags)
         
-        gard_scale = 0.5
+        gard_scale = 1.0
 
         for Tc_j in range(Tc):
             Kj = k_frags[Tc_j]
@@ -141,7 +141,7 @@ class FlashAttentionFunction(torch.autograd.Function):
                     ele_x = Tc_j * Bc
                     if ele_y < ele_x + Bc - 1:
                         causal_mask = torch.ones((Br, Bc),dtype=torch.bool, device=q.device).triu(ele_y - ele_x + 1)
-                        Sij.masked_fill_(causal_mask, -65500.0)
+                        Sij.masked_fill_(causal_mask, -float('inf'))
                 
                 Pij = torch.exp(Sij - Li.unsqueeze(-1)).to(q.dtype)
                 dVj += torch.einsum("... r c, ... r d -> ... c d", Pij, dOi) * gard_scale #* 0.01
@@ -156,15 +156,16 @@ class FlashAttentionFunction(torch.autograd.Function):
 # (B, H, NQ, D) = 1, 20, 576, 64
 # NKV = 227
 
-(B, H, NQ, D) = 1, 20, 2048, 64
-NKV = 2048
+(B, H, NQ, D) = 1, 10, 1024, 64
+NKV = NQ
 
-dtype = torch.float16
+dtype = torch.float32
+causal = True
 
 if __name__ == "__main__":
-    q = torch.rand((B, H, NQ, D), dtype=dtype, device="cuda")  #  * 3.2
-    k = torch.rand((B, H, NKV, D), dtype=dtype, device="cuda") #  * 75
-    v = torch.rand((B, H, NKV, D), dtype=dtype, device="cuda") #  * 15
+    q = torch.rand((B, H, NQ, D), dtype=dtype, device="cuda")   # * 5
+    k = torch.rand((B, H, NKV, D), dtype=dtype, device="cuda")  # * 75
+    v = torch.rand((B, H, NKV, D), dtype=dtype, device="cuda")  # * 15
 
     q.requires_grad_(True)
     k.requires_grad_(True)
@@ -175,9 +176,9 @@ if __name__ == "__main__":
     v2 = v.clone().detach().requires_grad_(True)
 
     fttn = FlashAttentionFunction()
-    o1 = fttn.apply(q, k, v, None, True)
+    o1 = fttn.apply(q, k, v, None, causal)
 
-    o2 = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, is_causal=True)
+    o2 = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, is_causal=causal)
 
     maxdiff = (o2 - o1).abs().max().item()
 
@@ -185,7 +186,7 @@ if __name__ == "__main__":
     print(o2.cpu()[0, 0, :, :])
 
 
-    dO = torch.ones_like(q) * 2
+    dO = torch.ones_like(q)
 
     o1.backward(dO)
     o2.backward(dO)
@@ -199,8 +200,8 @@ if __name__ == "__main__":
     dV2 = v2.grad.clone().detach()
 
     
-    print("FTTN dQ",dQ1.cpu()[0,-1,:,:] * 1e4)
-    print('PT dQ',dQ2.cpu()[0,-1,:,:] * 1e4)
+    print("FTTN dQ",dQ1.cpu()[0,-1,:,:] )
+    print('PT dQ',dQ2.cpu()[0,-1,:,:] )
     
     print("FTTN dK",dK1.cpu()[0,-1,:,:] )
     print('PT dK',dK2.cpu()[0,-1,:,:] )

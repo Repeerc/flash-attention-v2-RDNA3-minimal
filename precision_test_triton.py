@@ -39,6 +39,7 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
         "-DROCWMMA_BLOCK_DIM_16_SUPPORTED=1",
         "-mcumode",
         "-ffast-math",
+        "-fgpu-flush-denormals-to-zero"
     ],
     build_directory=build_path,
 )
@@ -110,20 +111,25 @@ triton_fttn = _attention.apply
 (B, H, N, D) = 1, 20, 512, 64
 Nkv = 512
 dtype = torch.float16
+
+ref_sdp_dtype = torch.float16
 causal = False
 
 if __name__ == "__main__":
-    q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")   #  * 5
-    k = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") #  * 75
-    v = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") #  * 15
+    
+    # qkv for rocwmma fttn, q2k2v2 for sdp as reference, q3k3v3 for triton fttn.
+    # 
+    q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")   # * 5
+    k = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") # * 75
+    v = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") # * 15
 
     q.requires_grad_(True)
     k.requires_grad_(True)
     v.requires_grad_(True)
 
-    q2 = q.clone().detach().to(torch.float32).requires_grad_(True)
-    k2 = k.clone().detach().to(torch.float32).requires_grad_(True)
-    v2 = v.clone().detach().to(torch.float32).requires_grad_(True)
+    q2 = q.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
+    k2 = k.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
+    v2 = v.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
     
     q3 = q.clone().detach().requires_grad_(True)
     k3 = k.clone().detach().requires_grad_(True)
@@ -164,9 +170,9 @@ if __name__ == "__main__":
 
     print('')
 
-    print("rocwmma  dQ",dQ1.cpu()[0,-1,:,:] * 1e4)
-    print('torchsdp dQ',dQ2.cpu()[0,-1,:,:] * 1e4)
-    print("triton   dQ",dQ3.cpu()[0,-1,:,:] * 1e4)
+    print("rocwmma  dQ",dQ1.cpu()[0,-1,:,:] )
+    print('torchsdp dQ',dQ2.cpu()[0,-1,:,:] )
+    print("triton   dQ",dQ3.cpu()[0,-1,:,:] )
     print('')
     
     print("rocwmma  dK",dK1.cpu()[0,-1,:,:] )

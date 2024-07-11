@@ -41,6 +41,7 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
         "-DROCWMMA_BLOCK_DIM_16_SUPPORTED=1",
         "-mcumode",
         "-ffast-math",
+        "-fgpu-flush-denormals-to-zero"
     ],
     build_directory=build_path,
 )

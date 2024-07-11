@@ -39,6 +39,7 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
         "-DROCWMMA_BLOCK_DIM_16_SUPPORTED=1",
         "-mcumode",
         "-ffast-math",
+        "-fgpu-flush-denormals-to-zero"
     ],
     build_directory=build_path,
 )
@@ -141,10 +142,10 @@ class FlashAttentionFunction(torch.autograd.Function):
 #Nkv = 227
 
 
-(B, H, N, D) = 1, 20, 567, 64
-Nkv = 234
+(B, H, N, D) = 1, 20, 1024, 64
+Nkv = 1024
 dtype = torch.float16
-causal = True
+causal = False
 
 if __name__ == "__main__":
     q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")   #  * 5
@@ -184,8 +185,8 @@ if __name__ == "__main__":
     dV2 = v2.grad.clone().detach()
 
 
-    print("FTTN dQ",dQ1.cpu()[0,-1,:,:] * 1e4)
-    print('PT dQ',dQ2.cpu()[0,-1,:,:] * 1e4)
+    print("FTTN dQ",dQ1.cpu()[0,-1,:,:] )
+    print('PT dQ',dQ2.cpu()[0,-1,:,:] )
     
     print("FTTN dK",dK1.cpu()[0,-1,:,:] )
     print('PT dK',dK2.cpu()[0,-1,:,:] )

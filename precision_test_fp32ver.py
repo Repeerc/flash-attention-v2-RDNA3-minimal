@@ -20,23 +20,16 @@ os.environ["PYTORCH_ROCM_ARCH"] = "gfx1100"  # ;gfx1101;gfx1102;gfx1103"
 src_Path = os.path.split(os.path.realpath(__file__))[0]
 build_path = os.path.join(src_Path, "build")
 os.makedirs(build_path, exist_ok=True)
-src_code = ["host.cpp", "kernel.cu"]
+src_code = ["host.cpp", "kernel_fp32.cu"]
 src_code = [os.path.join(src_Path, x) for x in src_code]
 import torch.utils.cpp_extension
 
-flash_attn_wmma = torch.utils.cpp_extension.load(
-    name="flash_attn_wmma",
+flash_attn_fp32 = torch.utils.cpp_extension.load(
+    name="flash_attn_fp32",
     sources=src_code,
     extra_cuda_cflags=[
         "-Ofast",
         "-save-temps",
-        "-DROCWMMA_ARCH_GFX1100=1",
-        "-DROCWMMA_ARCH_GFX1101=1",
-        "-DROCWMMA_ARCH_GFX1102=1",
-        "-DROCWMMA_ARCH_GFX1103=1",
-        "-DROCWMMA_ARCH_GFX11=1",
-        "-DROCWMMA_WAVE32_MODE=1",
-        "-DROCWMMA_BLOCK_DIM_16_SUPPORTED=1",
         "-mcumode",
         "-ffast-math",
         "-fgpu-flush-denormals-to-zero"
@@ -72,20 +65,14 @@ class FlashAttentionFunction(torch.autograd.Function):
         Nkv = k.shape[2]
         scale = D**-0.5
 
-        q = pad_to_multiple(q, 256, 2, -1)
-        k = pad_to_multiple(k, 256, 2, -100)
-        v = pad_to_multiple(v, 256, 2)
-        
-        o = torch.zeros_like(q)
-        
-        ret = flash_attn_wmma.forward(q,k,v,64,256, causal)
+        ret = flash_attn_fp32.forward(q,k,v,64,256//2, causal)
         o = ret[0]
         L = ret[1]
 
         ctx.args = (causal, scale, mask, Br, Bc, N, Nkv)
         ctx.save_for_backward(q, k, v, o, L)
 
-        return o[:,:,:N,:]
+        return o
 
     @staticmethod
     @torch.no_grad()
@@ -93,32 +80,25 @@ class FlashAttentionFunction(torch.autograd.Function):
         causal, scale, mask, Br, Bc, N, Nkv = ctx.args
         q, k, v, o, L = ctx.saved_tensors
     
-        do = pad_to_multiple(do, 256, 2)
-        
-        #k[:,:,Nkv:,:] = -0.1
-        #q[:,:,N:,:] = 0
-        
-        dQ, dK, dV = flash_attn_wmma.backward(q.contiguous(), 
+        dQ, dK, dV = flash_attn_fp32.backward(q.contiguous(), 
                                               k.contiguous(),
                                               v.contiguous(),
                                               o.contiguous(), 
                                               do.contiguous(),
                                               L.contiguous(),
-                                              256, 64,causal)
+                                              256//2, 64,causal)
         
-        return dQ[:,:,:N,:], dK[:,:,:Nkv,:], dV[:,:,:Nkv,:], None, None
+        return dQ, dK, dV, None, None
 
 
 #(B, H, N, D) = 1, 20, 576, 64
 #Nkv = 227
 
 
-(B, H, N, D) = 1, 20, 567, 64
-Nkv = 344
-
-dtype = torch.float16
-ref_sdp_dtype = torch.float16
-causal = True
+(B, H, N, D) = 1, 20, 1024, 64
+Nkv = 1024
+dtype = torch.float32
+causal = False
 
 if __name__ == "__main__":
     q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")   #  * 5
@@ -129,9 +109,9 @@ if __name__ == "__main__":
     k.requires_grad_(True)
     v.requires_grad_(True)
 
-    q2 = q.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
-    k2 = k.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
-    v2 = v.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
+    q2 = q.clone().detach().to(torch.float32).requires_grad_(True)
+    k2 = k.clone().detach().to(torch.float32).requires_grad_(True)
+    v2 = v.clone().detach().to(torch.float32).requires_grad_(True)
 
     fttn = FlashAttentionFunction()
     o1 = fttn.apply(q, k, v,None, causal)
@@ -144,7 +124,8 @@ if __name__ == "__main__":
     print(o2.cpu()[0, 0, :, :])
 
 
-    dO = torch.ones_like(q) 
+    dO = torch.ones_like(q)# + 1
+
     o1.backward(dO)
     o2.backward(dO)
 

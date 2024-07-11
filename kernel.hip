@@ -43,13 +43,12 @@ const int N_WAVES = 32;
 const int WAVE_SIZE = 32;
 
 //================================ Matrix multiplication ===============================
-// C = k*(A^T)B + C
-__device__ void mul_add_kAT_B(
+// C = (A^T)B + C
+__device__ void mul_add_AT_B(
     ComputeType *__restrict__ A,
     ComputeType *__restrict__ B,
     ComputeType *__restrict__ C,
-    const int m, const int n, const int k,
-    const float scale)
+    const int m, const int n, const int k)
 {
     rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, col_major> fragA;
     rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB;
@@ -81,7 +80,7 @@ __device__ void mul_add_kAT_B(
 #pragma unroll 8
             for (int i = 0; i < fragC.num_elements; ++i)
             {
-                fragC.x[i] = scale * fragACC.x[i] + fragC.x[i];
+                fragC.x[i] = fragACC.x[i] + fragC.x[i];
             }
             rocwmma::store_matrix_sync(C + (blk_y * n + blk_x), fragC, n, rocwmma::mem_row_major);
         }
@@ -134,12 +133,12 @@ __device__ void mul_kA_BT(
     __syncthreads();
 }
 
-// C = k*AB + C
-__device__ void mul_add_kA_B(
+// C = AB + C
+__device__ void mul_add_A_B(
     ComputeType *__restrict__ A,
     ComputeType *__restrict__ B,
     ComputeType *__restrict__ C,
-    const int m, const int n, const int k, float32_t scale)
+    const int m, const int n, const int k)
 {
 
     rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragA;
@@ -171,7 +170,7 @@ __device__ void mul_add_kA_B(
 #pragma unroll 8
             for (int i = 0; i < fragC.num_elements; ++i)
             {
-                fragC.x[i] = scale * fragACC.x[i] + fragC.x[i];
+                fragC.x[i] = fragACC.x[i] + fragC.x[i];
             }
             rocwmma::store_matrix_sync(C + (blk_y * n + blk_x), fragC, n, rocwmma::mem_row_major);
         }
@@ -282,7 +281,7 @@ fwd_kernel(
 
         __syncthreads();
 
-        mul_add_kA_B(Si, Vj, Oi, Br, d, Bc, 1.0);
+        mul_add_A_B(Si, Vj, Oi, Br, d, Bc);
     }
 
     if (tx < Br)
@@ -299,8 +298,6 @@ fwd_kernel(
     }
 }
 // =================================================================================
-
-#define GRAD_SCALE 0.95
 
 __global__ void
 bwd_kernel(
@@ -399,21 +396,37 @@ bwd_kernel(
         }
         __syncthreads();
 
-        mul_add_kAT_B(Pi, dOi, dVj, Bc, d, Br, 1.0 * GRAD_SCALE); // Pi[Br x Bc] dOi[Br x d]
-        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 1.0);                  // dPj:[Br x Bc]
+        mul_add_AT_B(Pi, dOi, dVj, Bc, d, Br);      // Pi[Br x Bc] @ dOi[Br x d]
+        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 1.0);    // dPi:[Br x Bc]
 
         if (tx < Br)
         {
 #pragma unroll 32
             for (int i = 0; i < Bc; i++)
             {
-                dSi[tx * Bc + i] = Pi[tx * Bc + i] * (dPi[tx * Bc + i] - Di_i[tx]);
+                dSi[tx * Bc + i] = scale * Pi[tx * Bc + i] * (dPi[tx * Bc + i] - Di_i[tx]);
             }
         }
         __syncthreads();
 
-        mul_add_kA_B(dSi, Kj, dQi, Br, d, Bc, scale * GRAD_SCALE);  // dSi[Br x Bc] Kj[Bc x d]
-        mul_add_kAT_B(dSi, Qi, dKj, Bc, d, Br, scale * GRAD_SCALE); // dSi[Br x Bc] Qi[Br x d]
+        // use wmma for matmul:
+        mul_add_A_B(dSi, Kj, dQi, Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
+
+        // not use wmma for matmul:
+        // if (tx < Br)
+        // {
+        //     for(int x = 0; x < d; x++)
+        //     {
+        //         float val = 0;
+        //         for(int i = 0; i < Bc; i++)
+        //         {
+        //             val += __half2float(dSi[tx * Bc + i]) * __half2float(Kj[i * d + x]);
+        //         }
+        //         dQi[tx * d + x] = __float2half(val);
+        //     }
+        // }
+        // __syncthreads();
+        mul_add_AT_B(dSi, Qi, dKj, Bc, d, Br); // dSi[Br x Bc] @ Qi[Br x d]
     }
 }
 
