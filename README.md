@@ -84,6 +84,7 @@ no_half_vae = false
 - [x] causal mask
 - [ ] attention bias
 - [ ] matrix multiplication optimization
+- [ ] fix poor performance in BF16
 - [ ] ...
 
 
@@ -113,8 +114,11 @@ Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in trito
 
 ### FP16, causal = True
 
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8a1ab599-6462-4f35-ac56-3f369b2443a4)
+![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/a10c402a-3ab7-45ac-88c5-a1c9f9c69b8f)
 
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/b70becdf-0e4f-4065-a455-f09829c0476e)
+![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/529353f0-7478-484b-8ddb-d94052dff13a)
+
+![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/47aaeef8-3064-49a3-b737-64d4f36ef30b)
+
 
 
