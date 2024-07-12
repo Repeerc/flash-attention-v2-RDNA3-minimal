@@ -84,6 +84,7 @@ no_half_vae = false
 - [x] causal mask
 - [ ] attention bias
 - [ ] matrix multiplication optimization
+- [ ] fix poor performance in BF16
 - [ ] ...
 
 
@@ -103,9 +104,11 @@ git hash: [47fc046ff29c9ea2ee90e987c39628a540603c8f](https://github.com/triton-l
 
 test use Triton windows pre-build version: https://github.com/Repeerc/triton-windows-amdgpu
 
-Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in triton)
+Compare with Triton offcial version ```06-fused-attention.py``` (96 dim_head was padded to 128 in triton)
 
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8d32fc5a-0082-4f48-b8e1-4acd14dc8a6f)
+CK-based(Composable Kernel) flash attention version compiled from: https://github.com/ROCm/flash-attention/tree/howiejay/navi_support
+
+![fwd_scan_N](https://github.com/user-attachments/assets/de34c354-23d4-45ce-b6e0-0a08cb254ff3)
 
 ![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/1b9655a4-fdd5-40e4-9174-37ad18d20cae)
 
@@ -113,8 +116,11 @@ Compare with ```06-fused-attention.py``` (96 dim_head was padded to 128 in trito
 
 ### FP16, causal = True
 
-![fwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/8a1ab599-6462-4f35-ac56-3f369b2443a4)
+![fwd_scan_N](https://github.com/user-attachments/assets/121c3b13-f37c-49cc-969d-41be1d305a62)
 
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/b70becdf-0e4f-4065-a455-f09829c0476e)
+![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/529353f0-7478-484b-8ddb-d94052dff13a)
+
+![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/47aaeef8-3064-49a3-b737-64d4f36ef30b)
+
 
 
