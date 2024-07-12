@@ -33,9 +33,53 @@ const int WAVE_SIZE = 32;
 #define AT_PTR_TYPE at::Half
 #define TORCH_DTYPE torch::kFloat16
 
+typedef _Float16 fp16x16_t __attribute__((ext_vector_type(16)));
+typedef float fp32x16_t __attribute__((ext_vector_type(16)));
 
 
 __global__ void gemm_kernel(
+    float16_t *__restrict__ A,
+    float16_t *__restrict__ B, 
+    float16_t *__restrict__ C, 
+    float16_t *__restrict__ D,
+    int m, int n, int k
+)
+{
+    fp16x16_t fragA;
+    fp16x16_t fragB;
+    fp32x16_t fragACC;
+    fp16x16_t fragD;
+
+    // asm volatile("s_sleep 0");
+
+
+    const int wave_id = (threadIdx.x / WAVE_SIZE);
+    const int half_lane_id = (threadIdx.x % (WAVE_SIZE / 2));
+
+    for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
+    {
+        int wave_xy = wave_id + wave_off * N_WAVES;
+
+        int wave_x = wave_xy % (n / ROCWMMA_N);
+        int wave_y = wave_xy / (n / ROCWMMA_N);
+
+        int blk_x = wave_x * ROCWMMA_N;
+        int blk_y = wave_y * ROCWMMA_M;
+        if ((blk_x < n) && (blk_y < m))
+        {
+            
+
+        }
+    }
+    //__syncthreads();
+
+    // asm volatile("s_sleep 0");
+
+}
+
+
+
+__global__ void gemm_kernel_rocwmma(
     float16_t *__restrict__ A,
     float16_t *__restrict__ B, 
     float16_t *__restrict__ C, 
@@ -83,7 +127,6 @@ __global__ void gemm_kernel(
 
 }
 
-
 torch::Tensor forward(
     torch::Tensor A, 
     torch::Tensor B, 
@@ -97,7 +140,7 @@ torch::Tensor forward(
 
     auto gridDim = dim3(1, 1, 1);
     auto blockDim = dim3(WAVE_SIZE * N_WAVES);
-   hipLaunchKernelGGL(( gemm_kernel), dim3(gridDim), dim3(blockDim), 0, 0, 
+   hipLaunchKernelGGL(( gemm_kernel_rocwmma), dim3(gridDim), dim3(blockDim), 0, 0, 
         (ComputeType *)A.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)B.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)C.data_ptr<AT_PTR_TYPE>(),

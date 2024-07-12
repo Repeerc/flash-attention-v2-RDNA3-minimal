@@ -45,29 +45,37 @@ gemmTest1 = torch.utils.cpp_extension.load(
     build_directory=build_path,
 )
 
-m, n, k = 128, 64, 64
+m, n, k = 64, 256, 64
 dtype = torch.float16
 
+ 
 A = torch.rand((m, k), dtype=dtype, device="cuda")
 B = torch.rand((k, n), dtype=dtype, device="cuda")
-C = torch.rand((m, n), dtype=dtype, device="cuda")
+C = torch.rand((m, n), dtype=dtype, device="cuda") 
 
-D = torch.matmul(A, B) + C
-D2 = gemmTest1.forward(A, B, C, m, n, k)
+for _ in range(10):
+    D = torch.matmul(A, B) + C
+for _ in range(10):
+    D2 = gemmTest1.forward(A, B, C, m, n, k)
 
-round = 1000
+
+round = 10000
 
 t0 = time.time()
-for _ in range(round):
+for i in range(round): 
+    C[0,0] += 1
     D = torch.matmul(A, B) + C
-    torch.cuda.synchronize()
+    # D.transpose_(0,1).contiguous() 
+torch.cuda.synchronize()
 t1 = time.time() - t0
 print("torch:", t1)
 
 t0 = time.time()
-for _ in range(round):
+for i in range(round): 
+    C[0,0] += 1
     D2 = gemmTest1.forward(A, B, C, m, n, k)
-    torch.cuda.synchronize()
+    # D2.transpose_(0,1).contiguous()
+torch.cuda.synchronize()
 t1 = time.time() - t0
 print("wmma:", t1)
 

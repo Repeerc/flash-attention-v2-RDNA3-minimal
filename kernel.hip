@@ -125,7 +125,7 @@ __device__ void mul_kA_BT(
 #pragma unroll 8
             for (int i = 0; i < fragC.num_elements; ++i)
             {
-                fragC.x[i] = scale * fragACC.x[i];
+                fragC.x[i] = scale * fragACC.x[i] * 1.44269504089f;
             }
             rocwmma::store_matrix_sync(C + (blk_y * n + blk_x), fragC, n, rocwmma::mem_row_major);
         }
@@ -191,8 +191,7 @@ fwd_kernel(
     const int nq, const int nkv,
     const int d,
     const float32_t scale,
-    const bool causal
-)
+    const bool causal)
 {
     const int q_offset = (blockIdx.x + blockIdx.y * gridDim.x) * nq * d;
     const int kv_offset = (blockIdx.x + blockIdx.y * gridDim.x) * nkv * d;
@@ -223,7 +222,7 @@ fwd_kernel(
     // ComputeType *__restrict__ Oi = &o[q_offset + Tr_i * Br * d];
 
     float32_t row_max_old = -INFINITY;
-    float32_t l_i = 0;
+    float32_t l_i = 0.0;
 
     for (int j = 0; j < Tc; j++)
     {
@@ -231,26 +230,30 @@ fwd_kernel(
         ComputeType *__restrict__ Kj = &k[kv_offset + j * Bc * d];
         ComputeType *__restrict__ Vj = &v[kv_offset + j * Bc * d];
         int ele_x = j * Bc;
+        float32_t row_max_new = -INFINITY;
+        float32_t row_sum = 0;
 
-        if(causal){
+        if (causal)
+        {
             if (ele_y >= ele_x)
                 mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
-        }else
+        }
+        else
             mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
 
-        if(causal)
+        if (causal)
         {
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
             {
 #pragma unroll 32
-                for(int i = 0; i < Bc; i++)
+                for (int i = 0; i < Bc; i++)
                 {
-                    if ( i >= tx + (ele_y - ele_x + 1)) 
-                    #if USE_HALF
+                    if (i >= tx + (ele_y - ele_x + 1))
+#if USE_HALF
                         Si[tx * Bc + i] = -65500.0;
-                    #else
+#else
                         Si[tx * Bc + i] = -INFINITY;
-                    #endif
+#endif
                 }
             }
             __syncthreads();
@@ -258,8 +261,6 @@ fwd_kernel(
 
         if (tx < Br)
         {
-            float32_t row_max_new = -INFINITY;
-            float32_t row_sum = 0;
 #pragma unroll 32
             for (int x = 0; x < Bc; x++)
             {
@@ -269,16 +270,16 @@ fwd_kernel(
 #pragma unroll 32
             for (int x = 0; x < Bc; x++)
             {
-                Si[(tx * Bc) + x] = __expf(Si[(tx * Bc) + x] - row_max_new);
+                Si[(tx * Bc) + x] = exp2f((Si[(tx * Bc) + x] - row_max_new));
                 row_sum += Si[(tx * Bc) + x];
             }
 
-            l_i = __expf(row_max_old - row_max_new) * l_i + row_sum;
+            l_i = exp2f((row_max_old - row_max_new)) * l_i + row_sum;
 
 #pragma unroll 32
             for (int i = 0; i < d; i++)
             {
-                Oi[(tx * d) + i] = Oi[(tx * d) + i] * __expf(row_max_old - row_max_new);
+                Oi[(tx * d) + i] = Oi[(tx * d) + i] * exp2f(row_max_old - row_max_new);
             }
             row_max_old = row_max_new;
         }
@@ -297,7 +298,7 @@ fwd_kernel(
         for (int i = 0; i < d; i++)
             o[q_offset + Tr_i * Br * d + tx * d + i] = Oi[tx * d + i];
 
-        l_i = row_max_old + __logf(l_i);
+        l_i = row_max_old + log2f(l_i);
         L[L_offset + Tr_i * Br + tx] = l_i;
     }
 }
@@ -369,28 +370,29 @@ bwd_kernel(
         float32_t *__restrict__ Li = &L[L_offset + Tr_i * Br];         // [Br]
         float32_t *__restrict__ Di_i = &Di[L_offset + Tr_i * Br];
 
-    
         int ele_y = Tr_i * Br;
 
-        if(causal){
-            if (ele_y >= ele_x)
-                mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
-        }else
-            mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d] 
+        // if (causal)
+        // {
+        //    if (ele_y >= ele_x)
+        //        mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale);
+        // }
+        // else
+            mul_kA_BT(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
 
-        if(causal)
+        if (causal)
         {
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
             {
 #pragma unroll 32
-                for(int i = 0; i < Bc; i++)
+                for (int i = 0; i < Bc; i++)
                 {
-                    if ( i >= tx + (ele_y - ele_x + 1)) 
-                    #if USE_HALF
+                    if (i >= tx + (ele_y - ele_x + 1))
+#if USE_HALF
                         Si[tx * Bc + i] = -65500.0;
-                    #else
+#else
                         Si[tx * Bc + i] = -INFINITY;
-                    #endif
+#endif
                 }
             }
             __syncthreads();
@@ -401,13 +403,13 @@ bwd_kernel(
 #pragma unroll 32
             for (int i = 0; i < Bc; i++)
             {
-                Pi[tx * Bc + i] = __expf(Si[tx * Bc + i] - Li[tx]); // Pi [Br x Bc]
+                Pi[tx * Bc + i] = exp2f(Si[tx * Bc + i] - Li[tx]); // Pi [Br x Bc]
             }
         }
         __syncthreads();
 
-        mul_add_AT_B(Pi, dOi, dVj, Bc, d, Br);      // Pi[Br x Bc] @ dOi[Br x d]
-        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 1.0);    // dPi:[Br x Bc]
+        mul_add_AT_B(Pi, dOi, dVj, Bc, d, Br);   // Pi[Br x Bc] @ dOi[Br x d]
+        mul_kA_BT(dOi, Vj, dPi, Br, Bc, d, 0.693147180559945f); // dPi:[Br x Bc]
 
         if (tx < Br)
         {
@@ -418,24 +420,9 @@ bwd_kernel(
             }
         }
         __syncthreads();
-
+        
         // use wmma for matmul:
-        mul_add_A_B(dSi, Kj, dQi, Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
-
-        // not use wmma for matmul:
-        // if (tx < Br)
-        // {
-        //     for(int x = 0; x < d; x++)
-        //     {
-        //         float val = 0;
-        //         for(int i = 0; i < Bc; i++)
-        //         {
-        //             val += __half2float(dSi[tx * Bc + i]) * __half2float(Kj[i * d + x]);
-        //         }
-        //         dQi[tx * d + x] = __float2half(val);
-        //     }
-        // }
-        // __syncthreads();
+        mul_add_A_B(dSi, Kj, dQi, Br, d, Bc); // dSi[Br x Bc] @ Kj[Bc x d]
         mul_add_AT_B(dSi, Qi, dKj, Bc, d, Br); // dSi[Br x Bc] @ Qi[Br x d]
     }
 }
@@ -443,10 +430,9 @@ bwd_kernel(
 // =================================================================================
 
 std::vector<torch::Tensor> forward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, 
+    torch::Tensor q, torch::Tensor k, torch::Tensor v,
     const int Br, const int Bc,
-    const bool causal
-)
+    const bool causal)
 {
 
     const int b = q.size(0);

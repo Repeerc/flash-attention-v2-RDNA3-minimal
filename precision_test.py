@@ -95,7 +95,7 @@ class FlashAttentionFunction(torch.autograd.Function):
     
         do = pad_to_multiple(do, 256, 2)
         
-        #k[:,:,Nkv:,:] = -0.1
+        k[:,:,Nkv:,:] = -0.1
         #q[:,:,N:,:] = 0
         
         dQ, dK, dV = flash_attn_wmma.backward(q.contiguous(), 
@@ -113,8 +113,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 #Nkv = 227
 
 
-(B, H, N, D) = 1, 20, 512, 64
-Nkv = 512
+(B, H, N, D) = 1, 20, 678, 64
+Nkv = 456
 
 dtype = torch.float16
 ref_sdp_dtype = torch.float16
