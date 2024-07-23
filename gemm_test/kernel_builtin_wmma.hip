@@ -33,7 +33,8 @@ const int WAVE_SIZE = 32;
 #define AT_PTR_TYPE at::Half
 #define TORCH_DTYPE torch::kFloat16
 
-
+typedef _Float16 fp16_frag __attribute__((ext_vector_type(16)));
+typedef float fp32_frag __attribute__((ext_vector_type(8)));
 
 __global__ void gemm_kernel(
     float16_t *__restrict__ A,
@@ -43,14 +44,16 @@ __global__ void gemm_kernel(
     int m, int n, int k
 )
 {
-    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragA[4];
-    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[4];
-    rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
-    rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
-    //asm volatile("s_sleep 0");
+
+    fp16_frag fragA[2];
+    fp16_frag fragB[2]; 
+
+    // asm volatile("s_sleep 0");
 
 
-    const int wave_id = (threadIdx.x / WAVE_SIZE);
+    const int wave_id = threadIdx.y; //(threadIdx.x / WAVE_SIZE);
+    const int wmma_lane = (threadIdx.x % 16);
+
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
         int wave_xy = wave_id + wave_off * N_WAVES;
@@ -62,35 +65,41 @@ __global__ void gemm_kernel(
         int blk_y = wave_y * ROCWMMA_M;
         if ((blk_x < n) && (blk_y < m))
         {
-            rocwmma::fill_fragment(fragACC, (float32_t)0.0);
+
+            fp32_frag fragACC = {};
+
             for (int i = 0; i < k; i += ROCWMMA_K*2)
             {
-                rocwmma::load_matrix_sync(fragA[0], A + (blk_y * k + i), k);
-                rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i+1*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[1], B + ((i + 1*ROCWMMA_K) * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[2], A + (blk_y * k + (i+2*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[2], B + ((i + 2*ROCWMMA_K) * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[3], A + (blk_y * k + (i+3*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[3], B + ((i + 3*ROCWMMA_K) * n + blk_x), n);
+// #pragma unroll 16
+                for(int ele = 0; ele < 16; ele++)
+                {
+                    fragA[0][ele] = (A + (blk_y * k + i))[wmma_lane * k + ele]; //lda = k
+                    fragB[0][ele] = (B + (i * n + blk_x))[ele * n + wmma_lane];
+                }
+                for(int ele = 0; ele < 16; ele++)
+                {
+                    fragA[1][ele] = (A + (blk_y * k + i+ROCWMMA_K))[wmma_lane * k + ele]; //lda = k
+                    fragB[1][ele] = (B + ((i+ROCWMMA_K) * n + blk_x))[ele * n + wmma_lane];
+                }
 
 
-                rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[2], fragB[2], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[3], fragB[3], fragACC);
+                __syncthreads();
+                fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[0], fragB[0], fragACC);
+                fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[1], fragB[1], fragACC);
             }
-            rocwmma::load_matrix_sync(fragC, C + (blk_y * n + blk_x), n, rocwmma::mem_row_major);
-            for (int i = 0; i < fragC.num_elements; ++i)
+            
+            __syncthreads();
+// #pragma unroll 8
+            for (int ele = 0; ele < 8; ++ele)
             {
-                fragC.x[i] = fragACC.x[i] + fragC.x[i];
+                const int r = ele * 2 + (threadIdx.x / 16);
+                (D + (blk_y * n + blk_x))[r * n + wmma_lane] = (C + (blk_y * n + blk_x))[r * n + wmma_lane] + fragACC[ele];
             }
-            rocwmma::store_matrix_sync(D + (blk_y * n + blk_x), fragC, n, rocwmma::mem_row_major);
         }
     }
     __syncthreads();
 
-    //asm volatile("s_sleep 0");
+    // asm volatile("s_sleep 0");
 
 }
 
@@ -107,7 +116,7 @@ torch::Tensor forward(
     auto D = torch::zeros({m, n}, optD);
 
     auto gridDim = dim3(1, 1, 1);
-    auto blockDim = dim3(WAVE_SIZE * N_WAVES);
+    auto blockDim = dim3(WAVE_SIZE , N_WAVES);
    hipLaunchKernelGGL(( gemm_kernel), dim3(gridDim), dim3(blockDim), 0, 0, 
         (ComputeType *)A.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)B.data_ptr<AT_PTR_TYPE>(),

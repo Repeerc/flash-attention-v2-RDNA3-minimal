@@ -49,7 +49,7 @@ def pad_to_multiple(tensor, multiple, dim=-1, val = 0):
     length = tensor.size(dim)
     remainder = length % multiple
     if remainder == 0:
-        return tensor
+        return tensor.contiguous()
     padding_length = multiple - remainder
     padding_shape = list(tensor.shape)
     padding_shape[dim] = padding_length
@@ -142,8 +142,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 #Nkv = 227
 
 
-(B, H, N, D) = 1, 20, 1024, 64
-Nkv = 1024
+(B, H, N, D) = 1, 20, 567, 64
+Nkv = 456
 dtype = torch.float16
 causal = False
 

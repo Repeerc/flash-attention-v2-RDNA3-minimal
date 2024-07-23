@@ -41,7 +41,7 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
         "-DROCWMMA_BLOCK_DIM_16_SUPPORTED=1",
         "-mcumode",
         "-ffast-math",
-        "-fgpu-flush-denormals-to-zero"
+        "-fgpu-flush-denormals-to-zero",
     ],
     build_directory=build_path,
 )
@@ -85,13 +85,82 @@ def count_time(func):
     return wrapper
 
 
-(B, H, N, D) = (1, 16, 2048, 64)
+(B, H, N, D) = (1, 20, 2048, 64)
 q_shape = (B, H, N, D)
 v_shape = (B, H, N, D)
 k_shape = (B, H, N, D)
 causal = False
 dtype = torch.float16
 
+
+class FlashAttentionFunction(torch.autograd.Function):
+    
+    @staticmethod
+    @torch.no_grad()
+    def forward(ctx, q, k, v, mask=None, causal=None, *args, **kwargs):
+        
+        N = q.shape[2]
+        D = q.shape[3]
+        Nkv = k.shape[2]
+        scale = D**-0.5
+ 
+        Br = 64
+        Bc = 256
+        if D > 448:
+            Br = 16
+            Bc = 512
+        elif D > 384:
+            Br = 32
+            Bc = 64
+        elif D > 320:
+            Br = 32
+            Bc = 128
+        elif D > 256:
+            Br = 32
+            Bc = 256
+        elif D > 192:
+            Br = 48
+            Bc = 128
+        elif D > 96:
+            Br = 64
+            Bc = 128
+            
+        ret = flash_attn_wmma.forward(q,k,v,Br,Bc, causal, scale)
+
+        o, q_bwd, k_bwd, v_bwd, o_bwd, L = ret
+        
+        ctx.args = (causal, scale, mask, N, Nkv, D)
+        ctx.save_for_backward(q_bwd, k_bwd, v_bwd, o_bwd, L)
+
+        return o
+
+    @staticmethod
+    @torch.no_grad()
+    def backward(ctx, do):
+        causal, scale, mask, N, Nkv, D = ctx.args
+        q, k, v, o, L = ctx.saved_tensors
+        
+        Br = 128
+        Bc = 64
+        
+        if D > 512:
+            Br = 128
+            Bc = 32
+        elif D > 256:
+            Br = 256
+            Bc = 32
+        
+        dQ, dK, dV = flash_attn_wmma.backward(q, 
+                                              k,
+                                              v,
+                                              o,
+                                              do,
+                                              L,N,Nkv,D,
+                                              Br, Bc,causal, scale)
+        
+        return dQ, dK, dV, None, None
+
+wmma_fttn = FlashAttentionFunction.apply
 
 @count_time
 def sdp_pt(q, k, v=None):
@@ -113,54 +182,24 @@ def sdp_bwd(q, k, v, O, dO):
     return dQ, dK, dV
 
 @count_time
-def ftt_bwd(q, k, v, O, dO, L):
+def ftt_bwd(q, k, v, O, dO):
     
-    dQ, dK, dV = flash_attn_wmma.backward(q, k, v, O, dO, L,256,64, causal)
+    if q.grad is not None:
+        q.grad.zero_()
+        k.grad.zero_()
+        v.grad.zero_()
+    O.backward(dO, retain_graph=True)
+    dQ, dK, dV = (q.grad, k.grad, v.grad)
     
     return dQ, dK, dV
     
 
 @count_time
-def ftt_rocm(q, k, v=None):
+def ftt_rocm(q, k, v):
     
-    def pad_to_multiple(tensor, multiple, dim=-1, val = 0):
-        length = tensor.size(dim)
-        remainder = length % multiple
-        if remainder == 0:
-            return tensor, 0
-        padding_length = multiple - remainder
-        padding_shape = list(tensor.shape)
-        padding_shape[dim] = padding_length
-        padding_tensor = torch.zeros(padding_shape, device=tensor.device, dtype=tensor.dtype) + val
-        return torch.cat([tensor, padding_tensor], dim=dim), padding_length
+    O = wmma_fttn(q,k,v, None, causal)
     
-    d_qkv = q.shape[-1]
-    q, d_pad_len = pad_to_multiple(q, 16)
-    k, d_pad_len = pad_to_multiple(k, 16)
-    v, d_pad_len = pad_to_multiple(v, 16)
-    
-    Bc_max = 256
-    Br_max = 64
-    d_final = d_qkv + d_pad_len
-    SRAM_SZ_FP16 = 32768
-    Bc_max = SRAM_SZ_FP16//Br_max - 2*d_final
-    while Bc_max <= 0:
-        Br_max -= 32
-        Bc_max = SRAM_SZ_FP16//Br_max - 2*d_final
-        
-    n_kv = k.shape[2]
-    k, nkv_pad_len = pad_to_multiple(k, 16, -2, -1)
-    v, nkv_pad_len = pad_to_multiple(v, 16, -2)
-    
-    Bc = Bc_max
-    Br = Br_max
-    
-    ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal)
-    
-    O = (ret[0])[:, :, :, :d_qkv]
-    L = ret[1]
-    
-    return O, L
+    return O
 
 
 torch.cuda.empty_cache()
@@ -185,9 +224,9 @@ for i in range(1,11,1):
     k.requires_grad_(True)
     v.requires_grad_(True)
     
-    q2 = q.clone().detach().requires_grad_(False)
-    k2 = k.clone().detach().requires_grad_(False)
-    v2 = v.clone().detach().requires_grad_(False)
+    q2 = q.clone().detach().requires_grad_(True)
+    k2 = k.clone().detach().requires_grad_(True)
+    v2 = v.clone().detach().requires_grad_(True)
     flops_per_matmul = 2.0 * B * H * N * N * D
     if causal:
         flops_per_matmul *= 0.5
@@ -196,8 +235,6 @@ for i in range(1,11,1):
 
     r0, flops_sdp_fwd, max_memory_sdp_fwd, sdp_fwd_time = sdp_pt(q, k, v)
     r3, flops_ft_fwd, max_memory_ft_fwd, fttn_fwd_time = ftt_rocm(q2, k2, v2)
-    L = r3[1]
-    r3 = r3[0]
     # r3 = r3.cpu().to(torch.float32).transpose(1, 2)
     # r0 = r0.cpu().to(torch.float32).transpose(1, 2)
     # print(L.cpu())
@@ -207,7 +244,7 @@ for i in range(1,11,1):
     dO2 = dO.clone().detach().requires_grad_(False) 
     
     dQKV_0, flops_sdp_bwd, max_memory_sdp_bwd, sdp_bwd_time = sdp_bwd(q,k,v,r0, dO)
-    dQKV_3, flops_ft_bwd, max_memory_ft_bwd, fttn_bwd_time = ftt_bwd(q2,k2,v2,r3, dO2, L)
+    dQKV_3, flops_ft_bwd, max_memory_ft_bwd, fttn_bwd_time = ftt_bwd(q2,k2,v2,r3, dO2)
     
     max_memory_ft = max(max_memory_ft_fwd, max_memory_ft_bwd)
     max_memory_sdp = max(max_memory_sdp_fwd, max_memory_sdp_bwd)
@@ -250,8 +287,8 @@ plt.grid(True)
 fig.subplots_adjust(top=0.95,bottom=0.05,right=0.96)
 fig.savefig('fwd_bwd_scan_N.png')
 
-#plt.show()
-#exit()
+# plt.show()
+# exit()
 
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
@@ -273,8 +310,6 @@ for i in range(1,15,1):
 
     r3, flops_ft, max_memory_ft, _ = ftt_rocm(q, k, v)
     r0, flops_sdp, max_memory_sdp, _ = sdp_pt(q, k, v)
-    L = r3[1]
-    r3 = r3[0]
     r3 = r3.cpu().to(torch.float32).transpose(1, 2)
     r0 = r0.cpu().to(torch.float32).transpose(1, 2)
 
@@ -309,7 +344,8 @@ plt.grid(True)
 fig.subplots_adjust(top=0.95,bottom=0.05,right=0.96)
 fig.savefig('fwd_scan_N.png')
 
-
+# plt.show()
+# exit()
 
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
@@ -332,8 +368,6 @@ for i in range(1,16):
 
     r3, flops_ft, max_memory_ft, _ = ftt_rocm(q, k, v)
     r0, flops_sdp, max_memory_sdp, _ = sdp_pt(q, k, v)
-    L = r3[1]
-    r3 = r3[0]
     r3 = r3.cpu().to(torch.float32).transpose(1, 2)
     r0 = r0.cpu().to(torch.float32).transpose(1, 2)
 

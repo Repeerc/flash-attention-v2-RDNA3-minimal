@@ -1,4 +1,3 @@
-import zluda_hijack_torch_hip_ext
 
 import math
 import torch
@@ -30,7 +29,7 @@ gemmTest1 = torch.utils.cpp_extension.load(
     name="gemmTest1",
     sources=src_code,
     extra_cuda_cflags=[
-        "-O3",
+        "-Ofast",
         "-save-temps",
         "-DROCWMMA_ARCH_GFX1100=1",
         "-DROCWMMA_ARCH_GFX1101=1",
@@ -53,17 +52,18 @@ A = torch.rand((m, k), dtype=dtype, device="cuda")
 B = torch.rand((k, n), dtype=dtype, device="cuda")
 C = torch.rand((m, n), dtype=dtype, device="cuda") 
 
-for _ in range(10):
-    D = torch.matmul(A, B) + C
+
 for _ in range(10):
     D2 = gemmTest1.forward(A, B, C, m, n, k)
+for _ in range(10):
+    D = torch.matmul(A, B) + C
 
 
 round = 10000
 
 t0 = time.time()
 for i in range(round): 
-    C[0,0] += 1
+    #C[0,0] += 1
     D = torch.matmul(A, B) + C
     # D.transpose_(0,1).contiguous() 
 torch.cuda.synchronize()
@@ -72,7 +72,7 @@ print("torch:", t1)
 
 t0 = time.time()
 for i in range(round): 
-    C[0,0] += 1
+    #C[0,0] += 1
     D2 = gemmTest1.forward(A, B, C, m, n, k)
     # D2.transpose_(0,1).contiguous()
 torch.cuda.synchronize()

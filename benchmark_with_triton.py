@@ -118,7 +118,7 @@ def sdp_bwd(q, k, v, O, dO):
 
 @count_time
 def fttn_rocwmma_bwd(q, k, v, O, dO, L):
-    dQ, dK, dV = flash_attn_wmma.backward(q, k, v, O, dO, L,256,64, causal)
+    dQ, dK, dV = flash_attn_wmma.backward(q, k, v, O, dO, L,256,64, causal, q.shape[-1] ** -0.5)
     return dQ, dK, dV
 
 @count_time
@@ -155,7 +155,7 @@ def fttn_rocwmma(q, k, v=None):
     Bc = Bc_max
     Br = Br_max
     
-    ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal)
+    ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal, d_final ** -0.5)
     
     O = (ret[0])[:, :, :, :d_qkv]
     L = ret[1]
