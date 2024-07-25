@@ -307,7 +307,7 @@ fwd_kernel(
 #pragma unroll 32
         for (int i = 0; i < d; i++)
         {
-            // pre-scale, Si=(Q @ K^T)/scale
+            // pre-scale, Si=(Q @ K^T)*scale
             Qi[tx * d + i] *= scale * 1.442695f; // 1/ln2=1.442695, exp(x)=exp2f((1/ln2)*x)
         }
     }
