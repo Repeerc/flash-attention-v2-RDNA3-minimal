@@ -262,9 +262,9 @@ def ftt_triton(q, k, v=None):
     #     return torch.cat([tensor, padding_tensor], dim=dim), padding_length
     
     d_qkv = q.shape[-1]
-    # q, d_pad_len = pad_to_multiple(q, triton.next_power_of_2(d_qkv))
-    # k, d_pad_len = pad_to_multiple(k, triton.next_power_of_2(d_qkv))
-    # v, d_pad_len = pad_to_multiple(v, triton.next_power_of_2(d_qkv))
+    q, d_pad_len = pad_to_multiple(q, triton.next_power_of_2(d_qkv))
+    k, d_pad_len = pad_to_multiple(k, triton.next_power_of_2(d_qkv))
+    v, d_pad_len = pad_to_multiple(v, triton.next_power_of_2(d_qkv))
     
     # Bc_max = 256
     # Br_max = 64
@@ -372,22 +372,23 @@ plt.grid(True)
 fig.subplots_adjust(top=0.95,bottom=0.05,right=0.96)
 fig.savefig('fwd_scan_N.png')
 
-plt.show()
-exit()
 
 
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
 d_list = []
+d_ck_list = []
 flops_ft_list = []
 maxmem_ft_list = []
 flops_sdp_list = []
 maxmem_sdp_list = []
 flops_triton_list = []
 maxmem_triton_list = []
+flops_ck_list = []
+maxmem_ck_list = []
 
 N = 4096
-for i in [64, 96 ,128]:
+for i in range(48,256+16,16):
     D = i
     q_shape = (B, H, N, D)
     v_shape = (B, H, N, D)
@@ -397,36 +398,59 @@ for i in [64, 96 ,128]:
     k = torch.rand(k_shape, dtype=dtype, device="cuda")  # * 80
     v = torch.rand(v_shape, dtype=dtype, device="cuda")  # * 30
 
+
     r3, flops_ft, max_memory_ft, _ = fttn_rocwmma(q, k, v)
     r0, flops_sdp, max_memory_sdp, _ = sdp_pt(q, k, v)
-    r1, flops_triton, max_memory_triton, _ = ftt_triton(q, k, v)
-    
-    L = r3[1]
-    r3 = r3[0]
-    r3 = r3.cpu() 
-    r0 = r0.cpu() 
-    r1 = r1.cpu()
+    # r1, flops_triton, max_memory_triton, _ = ftt_triton(q, k, v)
+    if D <= 128:
+        r4, flops_ck, max_memory_ck, _ = fttn_ck(q,k,v)
+        L_ck = r4[1] 
+     
+    L_roc = r3[1]
+     
+    r3 = r3[0].cpu()
+    r0 = r0.cpu()
+    # r1 = r1.cpu()
+    if D <= 128:
+        r4 = r4[0].cpu()
 
     maxdiff = (r0 - r3).abs().max().item()
-    print("max diff: ", maxdiff)
-    maxdiff = (r0 - r1).abs().max().item()
-    print("max diff sdp-triton: ", maxdiff)
+    print("max diff sdp-rocwmma: ", maxdiff)
+    # maxdiff = (r0 - r1).abs().max().item()
+    # print("max diff sdp-triton: ", maxdiff)
     
+    if D <= 128:
+        maxdiff = (r0 - r4).abs().max().item()
+        print("max diff sdp-ck: ", maxdiff)
+        
+    # maxdiff = (L_roc - L_ck).abs().max().item()
+    # print("max diff Lse: ", maxdiff)
+    
+    if D <= 128:
+        d_ck_list.append(D)
     
     d_list.append(D)
     flops_ft_list.append(flops_ft / 1e12)
     flops_sdp_list.append(flops_sdp / 1e12)
-    flops_triton_list.append(flops_triton / 1e12)
+    # flops_triton_list.append(flops_triton / 1e12)
+    
+    if D <= 128:
+        flops_ck_list.append(flops_ck / 1e12)
+    
     maxmem_ft_list.append(max_memory_ft)
     maxmem_sdp_list.append(max_memory_sdp)
-    maxmem_triton_list.append(max_memory_triton)
+    # maxmem_triton_list.append(max_memory_triton)
+    
+    if D <= 128:
+        maxmem_ck_list.append(max_memory_ck)
 
     
 fig = plt.figure(figsize=[7,9])
 plt.subplot(211)
 plt.plot(d_list, flops_ft_list, label="Flash attn 2 (rocwmma)")
 plt.plot(d_list, flops_sdp_list, label="PyTorch SDPA")
-plt.plot(d_list, flops_triton_list, label="Flash attn 2 (Triton)")
+plt.plot(d_ck_list, flops_ck_list, label="Flash attn 2 (ck)")
+# plt.plot(d_list, flops_triton_list, label="Flash attn 2 (Triton)")
 plt.xlabel("dim_head")
 plt.ylabel('TFlops')
 plt.legend()
@@ -436,7 +460,8 @@ plt.grid(True)
 plt.subplot(212)
 plt.plot(d_list, maxmem_ft_list, label="Flash attn 2 (rocwmma)")
 plt.plot(d_list, maxmem_sdp_list, label="PyTorch SDPA")
-plt.plot(d_list, maxmem_triton_list, label="Flash attn 2 (Triton)")
+plt.plot(d_ck_list, maxmem_ck_list, label="Flash attn 2 (ck)")
+# plt.plot(d_list, maxmem_triton_list, label="Flash attn 2 (Triton)")
 plt.xlabel("dim_head")
 plt.ylabel('VRAM(MB)')
 plt.legend()

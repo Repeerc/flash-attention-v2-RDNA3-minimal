@@ -238,8 +238,6 @@ __device__ void mul_add_A_B_mask_k(
             
             
             {
-                
-#pragma unroll 8
                 for(int y = blk_y; y < blk_y + ROCWMMA_M; y+=2)
                 {
                     int x = blk_x + (tid % ROCWMMA_N);
@@ -294,6 +292,7 @@ fwd_kernel(
     ComputeType *__restrict__ Si = &sram[0];                // Br * Bc
     ComputeType *__restrict__ Oi = &sram[Br * Bc];          // Br * d
     ComputeType *__restrict__ Qi = &sram[Br * Bc + Br * d]; // Br * d
+    //ComputeType *__restrict__ Vj = &sram[Br * Bc + 2*Br * d + 8]; // Bc * d
 
 #define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
     if (tx < Br)
@@ -301,6 +300,7 @@ fwd_kernel(
 #pragma unroll 32
         for (int i = 0; i < d; i += 8)
         {
+            // Load Qi into sram, fill 0 to Oi 
             // Qi[tx * d + i] = q[q_offset + Tr_i * Br * d + tx * d + i];
             FLOAT4(Qi[tx * d + i]) = FLOAT4((&(q[q_offset + Tr_i * Br * d]))[tx * d + i]);
             FLOAT4(Oi[tx * d + i]) = {0, 0, 0, 0};
@@ -308,8 +308,8 @@ fwd_kernel(
 #pragma unroll 32
         for (int i = 0; i < d; i++)
         {
-            Qi[tx * d + i] *= scale * 1.442695f;
-            // Oi[tx * d + i] = 0;
+            // pre-scale, Si=(Q @ K^T)/scale
+            Qi[tx * d + i] *= scale * 1.442695f; // 1/ln2=1.442695, exp(x)=exp2f((1/ln2)*x)
         }
     }
 
@@ -330,7 +330,7 @@ fwd_kernel(
         int xr = ele_x + Bc;
         float32_t row_max_new = -INFINITY;
         float32_t row_sum = 0;
-
+        float32_t rowmax_diff_exp = 0;
         //------------
         if constexpr (!causal)
         {
@@ -376,27 +376,56 @@ fwd_kernel(
 
         if (tx < Br)
         {
-#pragma unroll 32
-            for (int x = 0; x < Bc; x++)
+#pragma unroll 4
+            for (int x = 0; x < Bc; x+=8)
             {
                 row_max_new = max(row_max_new, Si[(tx * Bc) + x]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+1]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+2]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+3]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+4]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+5]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+6]);
+                row_max_new = max(row_max_new, Si[(tx * Bc) + x+7]);
             }
             row_max_new = max(row_max_old, row_max_new); 
-#pragma unroll 32
-            for (int i = 0; i < Bc; i++)
+            rowmax_diff_exp = exp2f(row_max_old - row_max_new);
+            row_max_old = row_max_new;
+            
+#pragma unroll 4
+            for (int i = 0; i < Bc; i+=8)
             {
                 Si[(tx * Bc) + i] = exp2f((Si[(tx * Bc) + i] - row_max_new));
+                Si[(tx * Bc) + i+1] = exp2f((Si[(tx * Bc) + i+1] - row_max_new));
+                Si[(tx * Bc) + i+2] = exp2f((Si[(tx * Bc) + i+2] - row_max_new));
+                Si[(tx * Bc) + i+3] = exp2f((Si[(tx * Bc) + i+3] - row_max_new));
+                Si[(tx * Bc) + i+4] = exp2f((Si[(tx * Bc) + i+4] - row_max_new));
+                Si[(tx * Bc) + i+5] = exp2f((Si[(tx * Bc) + i+5] - row_max_new));
+                Si[(tx * Bc) + i+6] = exp2f((Si[(tx * Bc) + i+6] - row_max_new));
+                Si[(tx * Bc) + i+7] = exp2f((Si[(tx * Bc) + i+7] - row_max_new));
                 row_sum += Si[(tx * Bc) + i];
+                row_sum += Si[(tx * Bc) + i+1];
+                row_sum += Si[(tx * Bc) + i+2];
+                row_sum += Si[(tx * Bc) + i+3];
+                row_sum += Si[(tx * Bc) + i+4];
+                row_sum += Si[(tx * Bc) + i+5];
+                row_sum += Si[(tx * Bc) + i+6];
+                row_sum += Si[(tx * Bc) + i+7];
             }
+            l_i = rowmax_diff_exp * l_i + row_sum;
 
-            l_i = exp2f(row_max_old - row_max_new) * l_i + row_sum;
-
-#pragma unroll 32
-            for (int i = 0; i < d; i++)
+#pragma unroll 4
+            for (int i = 0; i < d; i+=8)
             {
-                Oi[(tx * d) + i] *= exp2f(row_max_old - row_max_new);
+                Oi[(tx * d) + i] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+1] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+2] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+3] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+4] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+5] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+6] *= rowmax_diff_exp;
+                Oi[(tx * d) + i+7] *= rowmax_diff_exp;
             }
-            row_max_old = row_max_new;
         }
 
         __syncthreads();
@@ -632,6 +661,7 @@ std::vector<torch::Tensor> forward(
         Br * Bc * sizeof(ComputeType)               // Si
         + Br * (d + d_pad_sz) * sizeof(ComputeType) // Oi
         + Br * (d + d_pad_sz) * sizeof(ComputeType) // Qi
+        //+ Bc * (d + d_pad_sz) * sizeof(ComputeType) + 16 // Vj
         ;
 
 #define para_fwd \

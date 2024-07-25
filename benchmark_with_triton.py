@@ -97,6 +97,70 @@ causal = False
 dtype = torch.float16
 
 
+class FlashAttentionFunction(torch.autograd.Function):
+    
+    @staticmethod
+    @torch.no_grad()
+    def forward(ctx, q, k, v, mask=None, causal=None, *args, **kwargs):
+        
+        N = q.shape[2]
+        D = q.shape[3]
+        Nkv = k.shape[2]
+        scale = D**-0.5
+ 
+
+        Br = 64
+        Bc = 256
+        if D > 448:
+           Br = 16
+           Bc = 512
+        elif D > 384:
+           Br = 32
+           Bc = 64
+        elif D > 320:
+           Br = 32
+           Bc = 128
+        elif D > 256:
+           Br = 32
+           Bc = 256
+        elif D > 192:
+           Br = 48
+           Bc = 128
+        elif D > 128:
+           Br = 64
+           Bc = 128
+            
+        ret = flash_attn_wmma.forward(q,k,v,Br,Bc, causal, scale)
+
+        o, q_bwd, k_bwd, v_bwd, o_bwd, L = ret
+        
+        if q.requires_grad:
+            ctx.args = (causal, scale, mask, N, Nkv, D)
+            ctx.save_for_backward(q_bwd, k_bwd, v_bwd, o_bwd, L)
+
+        return o
+
+    @staticmethod
+    @torch.no_grad()
+    def backward(ctx, do):
+        causal, scale, mask, N, Nkv, D = ctx.args
+        q, k, v, o, L = ctx.saved_tensors
+        
+        Br = 256
+        Bc = 48
+        
+        dQ, dK, dV = flash_attn_wmma.backward(q, 
+                                              k,
+                                              v,
+                                              o,
+                                              do,
+                                              L,N,Nkv,D,
+                                              Br, Bc,causal, scale)
+        
+        return dQ, dK, dV, None, None
+
+wmma_fttn = FlashAttentionFunction.apply
+
 @count_time
 def sdp_pt(q, k, v=None):
     with torch.backends.cuda.sdp_kernel(
@@ -115,56 +179,26 @@ def sdp_bwd(q, k, v, O, dO):
     O.backward(dO, retain_graph=True)
     dQ, dK, dV = (q.grad, k.grad, v.grad)
     return dQ, dK, dV
-
 @count_time
-def fttn_rocwmma_bwd(q, k, v, O, dO, L):
-    dQ, dK, dV = flash_attn_wmma.backward(q, k, v, O, dO, L,256,64, causal, q.shape[-1] ** -0.5)
+def fttn_rocwmma_bwd(q, k, v, O, dO):
+    if q.grad is not None:
+        q.grad.zero_()
+        k.grad.zero_()
+        v.grad.zero_()
+    O.backward(dO, retain_graph=True)
+    dQ, dK, dV = (q.grad, k.grad, v.grad)
+    
     return dQ, dK, dV
 
 @count_time
 def fttn_rocwmma(q, k, v=None):
-    def pad_to_multiple(tensor, multiple, dim=-1, val = 0):
-        length = tensor.size(dim)
-        remainder = length % multiple
-        if remainder == 0:
-            return tensor, 0
-        padding_length = multiple - remainder
-        padding_shape = list(tensor.shape)
-        padding_shape[dim] = padding_length
-        padding_tensor = torch.zeros(padding_shape, device=tensor.device, dtype=tensor.dtype) + val
-        return torch.cat([tensor, padding_tensor], dim=dim), padding_length
+    O = wmma_fttn(q,k,v, None,causal)
     
-    d_qkv = q.shape[-1]
-    q, d_pad_len = pad_to_multiple(q, 16)
-    k, d_pad_len = pad_to_multiple(k, 16)
-    v, d_pad_len = pad_to_multiple(v, 16)
-    
-    Bc_max = 256
-    Br_max = 64
-    d_final = d_qkv + d_pad_len
-    SRAM_SZ_FP16 = 32768
-    Bc_max = SRAM_SZ_FP16//Br_max - 2*d_final
-    while Bc_max <= 0:
-        Br_max -= 32
-        Bc_max = SRAM_SZ_FP16//Br_max - 2*d_final
-        
-    n_kv = k.shape[2]
-    k, nkv_pad_len = pad_to_multiple(k, 16, -2, -1)
-    v, nkv_pad_len = pad_to_multiple(v, 16, -2)
-    
-    Bc = Bc_max
-    Br = Br_max
-    
-    ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal, d_final ** -0.5)
-    
-    O = (ret[0])[:, :, :, :d_qkv]
-    L = ret[1]
-    
-    return O, L
+    return O
 
 
 @count_time
-def ftt_triton_bwd(q, k, v, O, dO, L):
+def ftt_triton_bwd(q, k, v, O, dO):
     
     #dQ, dK, dV = flash_attn_wmma.backward(q, k, v, O, dO, L,256,64, causal)
 
@@ -263,8 +297,7 @@ for i in range(1,11,1):
     r0, flops_sdp_fwd, max_memory_sdp_fwd, sdp_fwd_time = sdp_pt(q, k, v)
     r1, flops_trition_fwd, max_memory_triton_fwd, triton_fwd_time = ftt_triton(q1, k1, v1)
     r3, flops_ft_fwd, max_memory_ft_fwd, fttn_fwd_time = fttn_rocwmma(q2, k2, v2)
-    L = r3[1]
-    r3 = r3[0]
+
     # r3 = r3.cpu().to(torch.float32).transpose(1, 2)
     # r0 = r0.cpu().to(torch.float32).transpose(1, 2)
     # print(L.cpu())
@@ -279,8 +312,8 @@ for i in range(1,11,1):
     dO2 = dO.clone().detach()
     
     dQKV_0, flops_sdp_bwd, max_memory_sdp_bwd, sdp_bwd_time = sdp_bwd(q,k,v,r0, dO)
-    dQKV_2, flops_triton_bwd, max_memory_triton_bwd, trition_bwd_time = ftt_triton_bwd(q1,k1,v1,r1, dO1, L)
-    dQKV_3, flops_ft_bwd, max_memory_ft_bwd, fttn_bwd_time = fttn_rocwmma_bwd(q2,k2,v2,r3, dO2, L)
+    dQKV_2, flops_triton_bwd, max_memory_triton_bwd, trition_bwd_time = ftt_triton_bwd(q1,k1,v1,r1, dO1)
+    dQKV_3, flops_ft_bwd, max_memory_ft_bwd, fttn_bwd_time = fttn_rocwmma_bwd(q2,k2,v2,r3, dO2)
     
     max_memory_ft = max(max_memory_ft_fwd, max_memory_ft_bwd)
     max_memory_sdp = max(max_memory_sdp_fwd, max_memory_sdp_bwd)
@@ -363,8 +396,6 @@ for i in range(1,15,1):
     r0, flops_sdp, max_memory_sdp, _ = sdp_pt(q, k, v)
     r1, flops_triton, max_memory_triton, _ = ftt_triton(q, k, v)
     
-    L = r3[1]
-    r3 = r3[0]
     r3 = r3.cpu()
     r0 = r0.cpu()
     r1 = r1.cpu()
