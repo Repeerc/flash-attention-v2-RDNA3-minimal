@@ -77,11 +77,11 @@ no_half_vae = false
 | VRAM | 21.5 GB | 16.8 GB | |
 
 
-# To be Implemented
+# To do
 
 - [x] backward pass
-- [ ] backward gradient scaled appropriately
-- [x] causal mask
+- [x] causal mask (need more optimization)
+- [ ] unaligned 32x seqlen padding optimization
 - [ ] attention bias
 - [ ] matrix multiplication optimization
 - [ ] fix poor performance in BF16
@@ -108,11 +108,23 @@ Compare with Triton offcial version ```06-fused-attention.py``` (96 dim_head was
 
 CK-based(Composable Kernel) flash attention version compiled from: https://github.com/ROCm/flash-attention/tree/howiejay/navi_support
 
-![fwd_scan_N](https://github.com/user-attachments/assets/de34c354-23d4-45ce-b6e0-0a08cb254ff3)
+windows env ck version: https://github.com/Repeerc/flash-attn-composable-kernel-gfx110x-windows-port
 
-![fwd_bwd_scan_N](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/1b9655a4-fdd5-40e4-9174-37ad18d20cae)
+### seqlen with 32x aligened 
 
-![fwd_scan_D](https://github.com/Repeerc/flash-attention-v2-RDNA3-minimal/assets/7540581/b533c016-e2c1-44b9-be2c-7cf80b44e5f6)
+![3abbb498ec5bb4c665dac05602c4eb55](https://github.com/user-attachments/assets/38e46c22-9fc8-4364-b734-5cfcf1a17344)
+
+![c018be8263e89a1daf67eab2fabb9dbe](https://github.com/user-attachments/assets/7d844241-b24b-4319-a34f-34236f7bf3cc)
+
+
+### seqlen without 32x aligened 
+
+![b5f625b6706e6dcf8006c2614badda5a](https://github.com/user-attachments/assets/1d9428fb-fbd9-4ed2-b98d-c1f09ef96e1e)
+
+### fwd+bwd
+
+![e1325f5163f73d96ff3a628a2b52d88b](https://github.com/user-attachments/assets/65881bbc-6fa5-487d-b09a-af7de5489854)
+
 
 ### FP16, causal = True
 
