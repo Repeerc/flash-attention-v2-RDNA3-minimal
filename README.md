@@ -82,6 +82,7 @@ no_half_vae = false
 - [x] backward pass
 - [x] causal mask (need more optimization)
 - [ ] unaligned 32x seqlen padding optimization
+- [ ] Load tile into LDS and fix bank conflict
 - [ ] attention bias
 - [ ] matrix multiplication optimization
 - [ ] fix poor performance in BF16
@@ -112,10 +113,9 @@ windows env ck version: https://github.com/Repeerc/flash-attn-composable-kernel-
 
 ### seqlen with 32x aligened 
 
-![3abbb498ec5bb4c665dac05602c4eb55](https://github.com/user-attachments/assets/38e46c22-9fc8-4364-b734-5cfcf1a17344)
+![10633e971ef4c4d77cad7d88b2444d04](https://github.com/user-attachments/assets/dbc5df50-7047-402c-ac2e-5575d1675891)
 
-![c018be8263e89a1daf67eab2fabb9dbe](https://github.com/user-attachments/assets/7d844241-b24b-4319-a34f-34236f7bf3cc)
-
+![6aafe509d9acbe34a610bd4c548d5a14](https://github.com/user-attachments/assets/ab75356e-9e64-4637-aefe-1fc36d9bd412)
 
 ### seqlen without 32x aligened 
 
@@ -123,8 +123,7 @@ windows env ck version: https://github.com/Repeerc/flash-attn-composable-kernel-
 
 ### fwd+bwd
 
-![e1325f5163f73d96ff3a628a2b52d88b](https://github.com/user-attachments/assets/65881bbc-6fa5-487d-b09a-af7de5489854)
-
+![49dcd74bff518fb0e63ee14675f3e54f](https://github.com/user-attachments/assets/5a3d62c2-541f-4128-8d49-533fa3456e6a)
 
 ### FP16, causal = True
 
