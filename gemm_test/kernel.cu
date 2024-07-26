@@ -19,7 +19,6 @@ using rocwmma::bfloat16_t;
 using rocwmma::float16_t;
 using rocwmma::float32_t;
 
-
 const int ROCWMMA_M = 16;
 const int ROCWMMA_N = 16;
 const int ROCWMMA_K = 16;
@@ -27,27 +26,22 @@ const int ROCWMMA_K = 16;
 const int N_WAVES = 32;
 const int WAVE_SIZE = 32;
 
-
 #define ComputeType float16_t
 #define AT_PTR_TYPE at::Half
 #define TORCH_DTYPE torch::kFloat16
 
-
-
 __global__ void gemm_kernel(
     float16_t *__restrict__ A,
-    float16_t *__restrict__ B, 
-    float16_t *__restrict__ C, 
+    float16_t *__restrict__ B,
+    float16_t *__restrict__ C,
     float16_t *__restrict__ D,
-    int m, int n, int k
-)
+    int m, int n, int k)
 {
     rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragA[4];
     rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[4];
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
-    //asm volatile("s_sleep 0");
-
+    // asm volatile("s_sleep 0");
 
     const int wave_id = (threadIdx.x / WAVE_SIZE);
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
@@ -62,22 +56,25 @@ __global__ void gemm_kernel(
         if ((blk_x < n) && (blk_y < m))
         {
             rocwmma::fill_fragment(fragACC, (float32_t)0.0);
-            for (int i = 0; i < k; i += ROCWMMA_K*2)
+            for (int i = 0; i < k; i += ROCWMMA_K * 2)
             {
                 rocwmma::load_matrix_sync(fragA[0], A + (blk_y * k + i), k);
-                rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i+1*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[1], B + ((i + 1*ROCWMMA_K) * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[2], A + (blk_y * k + (i+2*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[2], B + ((i + 2*ROCWMMA_K) * n + blk_x), n);
-                rocwmma::load_matrix_sync(fragA[3], A + (blk_y * k + (i+3*ROCWMMA_K)), k);
-                rocwmma::load_matrix_sync(fragB[3], B + ((i + 3*ROCWMMA_K) * n + blk_x), n);
+                // rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n); // A @ B
+                rocwmma::load_matrix_sync(fragB[0], B + (blk_x * k + i), k); // A @ B.T
 
+                rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i + 1 * ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragB[1], B + ((i + 1*ROCWMMA_K) * n + blk_x), n);  // A @ B
+                rocwmma::load_matrix_sync(fragB[1], B + (blk_x * k + (i + 1 * ROCWMMA_K)), k); // A @ B.T
+
+                // rocwmma::load_matrix_sync(fragA[2], A + (blk_y * k + (i+2*ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragB[2], B + ((i + 2*ROCWMMA_K) * n + blk_x), n);
+                // rocwmma::load_matrix_sync(fragA[3], A + (blk_y * k + (i+3*ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragB[3], B + ((i + 3*ROCWMMA_K) * n + blk_x), n);
 
                 rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
                 rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[2], fragB[2], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[3], fragB[3], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[2], fragB[2], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[3], fragB[3], fragACC);
             }
             rocwmma::load_matrix_sync(fragC, C + (blk_y * n + blk_x), n, rocwmma::mem_row_major);
             for (int i = 0; i < fragC.num_elements; ++i)
@@ -89,17 +86,14 @@ __global__ void gemm_kernel(
     }
     __syncthreads();
 
-    //asm volatile("s_sleep 0");
-
+    // asm volatile("s_sleep 0");
 }
 
-
 torch::Tensor forward(
-    torch::Tensor A, 
-    torch::Tensor B, 
-    torch::Tensor C, 
-    int m, int n, int k
-)
+    torch::Tensor A,
+    torch::Tensor B,
+    torch::Tensor C,
+    int m, int n, int k)
 {
 
     auto optD = torch::TensorOptions().dtype(torch::kFloat16).device(torch::kCUDA);
@@ -112,8 +106,7 @@ torch::Tensor forward(
         (ComputeType *)B.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)C.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)D.data_ptr<AT_PTR_TYPE>(),
-        m,n,k
-    );
+        m, n, k);
 
     return D;
 }

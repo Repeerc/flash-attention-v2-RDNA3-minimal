@@ -49,14 +49,23 @@ dtype = torch.float16
 
  
 A = torch.rand((m, k), dtype=dtype, device="cuda")
-B = torch.rand((k, n), dtype=dtype, device="cuda")
+B = torch.rand((n, k), dtype=dtype, device="cuda")
 C = torch.rand((m, n), dtype=dtype, device="cuda") 
+C2 = C.clone().detach()
+
+D2 = gemmTest1.forward(A, B, C2, m, n, k)
+D = torch.matmul(A, B.T) + C
+
+max_diff = (D2 - D).abs().max().item()
+print(D2.cpu())
+print(D.cpu())
+print(max_diff)
 
 
 for _ in range(10):
     D2 = gemmTest1.forward(A, B, C, m, n, k)
 for _ in range(10):
-    D = torch.matmul(A, B) + C
+    D = torch.matmul(A, B.T) + C
 
 
 round = 10000
@@ -64,7 +73,7 @@ round = 10000
 t0 = time.time()
 for i in range(round): 
     #C[0,0] += 1
-    D = torch.matmul(A, B) + C
+    D = torch.matmul(A, B.T) + C
     # D.transpose_(0,1).contiguous() 
 torch.cuda.synchronize()
 t1 = time.time() - t0
@@ -79,7 +88,3 @@ torch.cuda.synchronize()
 t1 = time.time() - t0
 print("wmma:", t1)
 
-max_diff = (D2 - D).abs().max().item()
-print(D2.cpu())
-print(D.cpu())
-print(max_diff)

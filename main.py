@@ -85,7 +85,7 @@ def count_time(func):
     return wrapper
 
 
-(B, H, N, D) = (1, 20, 2048, 64)
+(B, H, N, D) = (1, 24, 2048, 64)
 q_shape = (B, H, N, D)
 v_shape = (B, H, N, D)
 k_shape = (B, H, N, D)
@@ -119,12 +119,12 @@ class FlashAttentionFunction(torch.autograd.Function):
             Br = 32
             Bc = 256
         elif D > 192:
-            Br = 48
-            Bc = 128
-        elif D > 96:
             Br = 64
             Bc = 128
-            
+        elif D > 128:
+            Br = 64
+            Bc = 256
+           
         ret = flash_attn_wmma.forward(q,k,v,Br,Bc, causal, scale)
 
         o, q_bwd, k_bwd, v_bwd, o_bwd, L = ret
@@ -143,12 +143,12 @@ class FlashAttentionFunction(torch.autograd.Function):
         Br = 128
         Bc = 64
         
-        if D > 512:
-            Br = 128
-            Bc = 32
-        elif D > 256:
-            Br = 256
-            Bc = 32
+        # if D > 512:
+        #     Br = 128
+        #     Bc = 32
+        # elif D > 256:
+        #     Br = 256
+        #     Bc = 32
         
         dQ, dK, dV = flash_attn_wmma.backward(q, 
                                               k,

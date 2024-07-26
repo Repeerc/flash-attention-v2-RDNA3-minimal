@@ -35,11 +35,14 @@ const int WAVE_SIZE = 32;
 typedef _Float16 fp16_frag __attribute__((ext_vector_type(16)));
 typedef float fp32_frag __attribute__((ext_vector_type(8)));
 
+#define HALF16(pointer) (reinterpret_cast<fp16_frag *>((void *)&(pointer))[0])
+
+
 __global__ void gemm_kernel(
     float16_t *__restrict__ A,
     float16_t *__restrict__ B, 
     float16_t *__restrict__ C, 
-    float16_t *__restrict__ D,
+    //float16_t *__restrict__ D,
     int m, int n, int k
 )
 {
@@ -47,10 +50,12 @@ __global__ void gemm_kernel(
     fp16_frag fragA[2];
     fp16_frag fragB[2]; 
 
+
     // asm volatile("s_sleep 0");
 
 
-    const int wave_id = threadIdx.y; //(threadIdx.x / WAVE_SIZE);
+    const int wave_id = threadIdx.x / WAVE_SIZE;
+    const int lane_id = threadIdx.x % WAVE_SIZE;
     const int wmma_lane = (threadIdx.x % 16);
 
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
@@ -65,35 +70,48 @@ __global__ void gemm_kernel(
         if ((blk_x < n) && (blk_y < m))
         {
 
-            fp32_frag fragACC = {};
+            fp32_frag fragACC;
+
+#pragma unroll
+            for (int ele = 0; ele < 8; ++ele)
+            {
+                const int r = ele * 2 + (lane_id / 16);
+                fragACC[ele] = (C + (blk_y * n + blk_x))[r * n + wmma_lane];
+            }
 
             for (int i = 0; i < k; i += ROCWMMA_K*2)
             {
-// #pragma unroll 16
-                for(int ele = 0; ele < 16; ele++)
-                {
-                    fragA[0][ele] = (A + (blk_y * k + i))[wmma_lane * k + ele]; //lda = k
-                    fragB[0][ele] = (B + (i * n + blk_x))[ele * n + wmma_lane];
-                }
-                for(int ele = 0; ele < 16; ele++)
-                {
-                    fragA[1][ele] = (A + (blk_y * k + i+ROCWMMA_K))[wmma_lane * k + ele]; //lda = k
-                    fragB[1][ele] = (B + ((i+ROCWMMA_K) * n + blk_x))[ele * n + wmma_lane];
-                }
+                // for(int ele = 0; ele < 16; ele++)
+                // {
+                //     fragA[ele] = (A + (blk_y * k + i))[wmma_lane * k + ele]; //lda = k
+                //     //fragB[ele] = (B + (i * n + blk_x))[ele * n + wmma_lane]; // A @ B 
+                //     fragB[ele] = (B + (blk_x * k + i))[wmma_lane * k + ele];   // A @ B^T
+
+                // }
+
+                //fragA = (A + (blk_y * k + i))[wmma_lane * k + ele];
+
+                fragA[0] = HALF16((A + (blk_y * k + i))[wmma_lane * k]);
+                fragB[0] = HALF16((B + (blk_x * k + i))[wmma_lane * k]);
+
+                fragA[1] = HALF16((A + (blk_y * k + i + ROCWMMA_K))[wmma_lane * k]);
+                fragB[1] = HALF16((B + (blk_x * k + i + ROCWMMA_K))[wmma_lane * k]);
 
 
-                __syncthreads();
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[0], fragB[0], fragACC);
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[1], fragB[1], fragACC);
+                
+
             }
-            
             __syncthreads();
-// #pragma unroll 8
+
+#pragma unroll
             for (int ele = 0; ele < 8; ++ele)
             {
-                const int r = ele * 2 + (threadIdx.x / 16);
-                (D + (blk_y * n + blk_x))[r * n + wmma_lane] = (C + (blk_y * n + blk_x))[r * n + wmma_lane] + fragACC[ele];
+                const int r = ele * 2 + (lane_id / 16);
+                (C + (blk_y * n + blk_x))[r * n + wmma_lane] =  fragACC[ele];
             }
+
         }
     }
     __syncthreads();
@@ -111,18 +129,17 @@ torch::Tensor forward(
 )
 {
 
-    auto optD = torch::TensorOptions().dtype(torch::kFloat16).device(torch::kCUDA);
-    auto D = torch::zeros({m, n}, optD);
+    //auto optD = torch::TensorOptions().dtype(torch::kFloat16).device(torch::kCUDA);
+    //auto D = torch::zeros({m, n}, optD);
 
     auto gridDim = dim3(1, 1, 1);
-    auto blockDim = dim3(WAVE_SIZE , N_WAVES);
+    auto blockDim = dim3(WAVE_SIZE * N_WAVES);
     gemm_kernel<<<gridDim, blockDim, 0>>>(
         (ComputeType *)A.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)B.data_ptr<AT_PTR_TYPE>(),
-        (ComputeType *)C.data_ptr<AT_PTR_TYPE>(),
-        (ComputeType *)D.data_ptr<AT_PTR_TYPE>(),
+        (ComputeType *)C.data_ptr<AT_PTR_TYPE>(), 
         m,n,k
     );
 
-    return D;
+    return C;
 }

@@ -57,7 +57,7 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
 
 triton_fttn = _attention.apply
 
-test_round = 100
+test_round = 200
 def count_time(func):
     def wrapper(*args, **kwargs):
         # torch.cuda.empty_cache()
@@ -65,7 +65,7 @@ def count_time(func):
         
         #warm up
         torch.cuda.synchronize()
-        for _ in range(10):
+        for _ in range(50):
             ret = func(*args, **kwargs)
         torch.cuda.synchronize()
         
@@ -117,23 +117,25 @@ class FlashAttentionFunction(torch.autograd.Function):
         Br = 64
         Bc = 256
         if D > 448:
-           Br = 16
-           Bc = 512
+            Br = 16
+            Bc = 512
         elif D > 384:
-           Br = 32
-           Bc = 64
+            Br = 32
+            Bc = 64
         elif D > 320:
-           Br = 32
-           Bc = 128
+            Br = 32
+            Bc = 128
         elif D > 256:
-           Br = 32
-           Bc = 256
-        elif D > 192:
-           Br = 48
-           Bc = 128
-        elif D > 128:
-           Br = 64
-           Bc = 128
+            Br = 32
+            Bc = 256
+        # elif D > 192:
+        #     Br = 64
+        #     Bc = 128
+        # elif D > 128:
+        #     Br = 64
+        #     Bc = 256
+           
+           
             
         ret = flash_attn_wmma.forward(q,k,v,Br,Bc, causal, scale)
 
@@ -151,8 +153,8 @@ class FlashAttentionFunction(torch.autograd.Function):
         causal, scale, mask, N, Nkv, D = ctx.args
         q, k, v, o, L = ctx.saved_tensors
         
-        Br = 256
-        Bc = 48
+        Br = 128
+        Bc = 64
         
         dQ, dK, dV = flash_attn_wmma.backward(q, 
                                               k,
@@ -373,6 +375,8 @@ fig.subplots_adjust(top=0.95,bottom=0.05,right=0.96)
 fig.savefig('fwd_scan_N.png')
 
 
+# plt.show()
+# exit()
 
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
