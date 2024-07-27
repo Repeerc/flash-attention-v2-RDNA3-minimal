@@ -1,4 +1,5 @@
 import math
+from einops import rearrange
 import torch
 
 
@@ -73,29 +74,9 @@ class FlashAttentionFunction(torch.autograd.Function):
         scale = D**-0.5
 
         Br = 64
-        Bc = 256
-        if Nkv <= 96:
-            Br = 128
-            Bc = 96
-            
-        if D > 448:
-           Br = 16
-           Bc = 512
-        elif D > 384:
-           Br = 32
-           Bc = 64
-        elif D > 320:
-           Br = 32
-           Bc = 128
-        elif D > 256:
-           Br = 32
-           Bc = 256
-        elif D > 192:
-           Br = 64
-           Bc = 128
-        elif D > 128:
-           Br = 64
-           Bc = 256
+        Bc = 128
+        if D > 384:
+           Br = 32 
         
              
             
@@ -135,8 +116,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 import triton
 
 
-(B, H, N, D) = 1, 24, 512, 320
-Nkv = 77
+(B, H, N, D) = 2, 10, 4096, 64
+Nkv = 256
 
 dtype = torch.float16
 ref_sdp_dtype = torch.float16
@@ -145,11 +126,14 @@ causal = False
 fttn = FlashAttentionFunction
 
 if __name__ == "__main__":
-    q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")    
-    k = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") 
-    v = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda")  
+    q = torch.rand((B,  H, N,   D), dtype=dtype, device="cuda") 
+    k = torch.rand((B,  H, Nkv, D), dtype=dtype, device="cuda") 
+    v = torch.rand((B,  H, Nkv, D), dtype=dtype, device="cuda") 
     
-    print(q.stride(), k.stride(), v.stride())
+    # q, k, v = map(lambda t: rearrange(t, 'b n h d -> b h n d'), (q, k, v))
+    
+    # print(q.size(), k.size(), v.size())
+    # print(q.stride(), k.stride(), v.stride())
 
     q.requires_grad_(True)
     k.requires_grad_(True)

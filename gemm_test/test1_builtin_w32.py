@@ -55,13 +55,12 @@ print(D.cpu())
 print("diff",max_diff)
 
 
-for _ in range(10):
-    D2 = gemmTest1.forward(A, B, C, m, n, k)
-for _ in range(10):
-    D = torch.matmul(A, B.T) + C
     
 round = 10000
 
+for _ in range(100):
+    D = torch.matmul(A, B.T) + C
+torch.cuda.synchronize()
 t0 = time.time()
 for i in range(round): 
     # C[1,1] += 1
@@ -71,6 +70,10 @@ torch.cuda.synchronize()
 t1 = time.time() - t0
 print("torch:", t1)
 
+
+for _ in range(100):
+    D2 = gemmTest1.forward(A, B, C, m, n, k)
+torch.cuda.synchronize()
 t0 = time.time()
 for i in range(round): 
     # C[1,1] += 1

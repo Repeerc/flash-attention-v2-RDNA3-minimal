@@ -47,6 +47,8 @@ __global__ void gemm_kernel(
 )
 {
 
+    __shared__ fp16_frag trLds[N_WAVES][16];
+
     fp16_frag fragA[2];
     fp16_frag fragB[2]; 
     // asm volatile("s_sleep 0");
@@ -89,10 +91,16 @@ __global__ void gemm_kernel(
                 //fragA = (A + (blk_y * k + i))[wmma_lane * k + ele];
 
                 fragA[0] = HALF16((A + (blk_y * k + i))[wmma_lane * k]);
-                fragB[0] = HALF16((B + (blk_x * k + i))[wmma_lane * k]);
+
+                trLds[wave_id][wmma_lane] = HALF16((B + (i * n + blk_x))[wmma_lane * n]);
+                for(int ele = 0; ele < 16; ele++)
+                    fragB[0][ele] = ((float16_t *)&trLds[wave_id])[ele * 16 + wmma_lane];
 
                 fragA[1] = HALF16((A + (blk_y * k + i + ROCWMMA_K))[wmma_lane * k]);
-                fragB[1] = HALF16((B + (blk_x * k + i + ROCWMMA_K))[wmma_lane * k]); 
+
+                trLds[wave_id][wmma_lane] = HALF16((B + ((i + ROCWMMA_K) * n + blk_x))[wmma_lane * n]);
+                for(int ele = 0; ele < 16; ele++)
+                    fragB[1][ele] = ((float16_t *)&trLds[wave_id])[ele * 16 + wmma_lane];
 
                 asm volatile("v_wmma_f32_16x16x16_f16 %0, %1, %2, %0" : "=v"(fragACC) : "v"(fragA[0]), "v"(fragB[0]), "0"(fragACC));
                 asm volatile("v_wmma_f32_16x16x16_f16 %0, %1, %2, %0" : "=v"(fragACC) : "v"(fragA[1]), "v"(fragB[1]), "0"(fragACC));
