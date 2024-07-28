@@ -360,8 +360,8 @@ fig.subplots_adjust(top=0.95,bottom=0.05,right=0.96)
 fig.savefig('fwd_scan_N.png')
 
 
-# plt.show()
-# exit()
+plt.show()
+exit()
 
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()

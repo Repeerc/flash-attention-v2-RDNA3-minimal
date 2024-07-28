@@ -64,31 +64,35 @@ __device__ void mul_add_AT_B(
     ComputeType *__restrict__ C,
     const int m, const int n, const int k, const float scale)
 {
-    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, col_major> fragA;
-    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB;
+    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, col_major> fragA[1];
+    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[1];
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
 
-    const int wave_id = (threadIdx.x / WAVE_SIZE);
+    const int wave_id = __builtin_amdgcn_readfirstlane(threadIdx.x / WAVE_SIZE);
 
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
-        int wave_xy = wave_id + wave_off * N_WAVES;
+        int wave_xy = __builtin_amdgcn_readfirstlane(wave_id + wave_off * N_WAVES);
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = __builtin_amdgcn_readfirstlane(wave_xy % (n / ROCWMMA_N));
+        int wave_y = __builtin_amdgcn_readfirstlane(wave_xy / (n / ROCWMMA_N));
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = __builtin_amdgcn_readfirstlane(wave_x * ROCWMMA_N);
+        int blk_y = __builtin_amdgcn_readfirstlane(wave_y * ROCWMMA_M);
 
         if ((blk_x < n) && (blk_y < m))
         {
             rocwmma::fill_fragment(fragACC, (float32_t)0.0);
-            for (int i = 0; i < k; i += ROCWMMA_K)
+            for (int i = 0; i < k; i += 1*ROCWMMA_K)
             {
-                rocwmma::load_matrix_sync(fragA, A + (i * m + blk_y), m);
-                rocwmma::load_matrix_sync(fragB, B + (i * n + blk_x), n);
-                rocwmma::mma_sync(fragACC, fragA, fragB, fragACC);
+                rocwmma::load_matrix_sync(fragA[0], A + (i * m + blk_y), m);
+                rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n);
+                // rocwmma::load_matrix_sync(fragA[1], A + ((i+ROCWMMA_K) * m + blk_y), m);
+                // rocwmma::load_matrix_sync(fragB[1], B + ((i+ROCWMMA_K) * n + blk_x), n);
+
+                rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
             }
             rocwmma::load_matrix_sync(fragC, C + (blk_y * n + blk_x), n, rocwmma::mem_row_major);
             for (int i = 0; i < fragC.num_elements; ++i)
@@ -162,19 +166,20 @@ __device__ void mul_A_BT(
     fp16_frag fragA[2];
     fp16_frag fragB[2];
 
-    const int wave_id = threadIdx.x / WAVE_SIZE;
+    const int wave_id = __builtin_amdgcn_readfirstlane(threadIdx.x / WAVE_SIZE);
     const int lane_id = threadIdx.x % WAVE_SIZE;
     const int wmma_lane = (threadIdx.x % 16);
 
+
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
-        int wave_xy = wave_id + wave_off * N_WAVES;
+        int wave_xy = __builtin_amdgcn_readfirstlane(wave_id + wave_off * N_WAVES);
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = __builtin_amdgcn_readfirstlane(wave_xy % (n / ROCWMMA_N));
+        int wave_y = __builtin_amdgcn_readfirstlane(wave_xy / (n / ROCWMMA_N));
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = __builtin_amdgcn_readfirstlane(wave_x * ROCWMMA_N);
+        int blk_y = __builtin_amdgcn_readfirstlane(wave_y * ROCWMMA_M);
         if ((blk_x < n) && (blk_y < m))
         {
             fp32_frag fragACC = {};
@@ -191,12 +196,13 @@ __device__ void mul_A_BT(
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[0], fragB[0], fragACC);
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[1], fragB[1], fragACC);
             }
+            fragACC = fragACC * scale;
             __syncthreads();
 
             for (int ele = 0; ele < 8; ++ele)
             {
                 const int r = ele * 2 + (lane_id / 16);
-                (C + (blk_y * n + blk_x))[r * n + wmma_lane] = fragACC[ele] * scale;
+                (C + (blk_y * n + blk_x))[r * n + wmma_lane] = fragACC[ele];
             }
         }
     }
@@ -217,17 +223,17 @@ __device__ void mul_add_A_B(
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
 
-    const int wave_id = (threadIdx.x / WAVE_SIZE);
+    const int wave_id = __builtin_amdgcn_readfirstlane(threadIdx.x / WAVE_SIZE);
 
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
-        int wave_xy = wave_id + wave_off * N_WAVES;
+        int wave_xy = __builtin_amdgcn_readfirstlane(wave_id + wave_off * N_WAVES);
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = __builtin_amdgcn_readfirstlane(wave_xy % (n / ROCWMMA_N));
+        int wave_y = __builtin_amdgcn_readfirstlane(wave_xy / (n / ROCWMMA_N));
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = __builtin_amdgcn_readfirstlane(wave_x * ROCWMMA_N);
+        int blk_y = __builtin_amdgcn_readfirstlane(wave_y * ROCWMMA_M);
         if ((blk_x < n) && (blk_y < m))
         {
             rocwmma::fill_fragment(fragACC, (float32_t)0.0);
@@ -265,18 +271,18 @@ __device__ void mul_add_A_B_mask_k(
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
 
-    const int wave_id = (threadIdx.x / WAVE_SIZE);
+    const int wave_id = __builtin_amdgcn_readfirstlane(threadIdx.x / WAVE_SIZE);
     const int tid = threadIdx.x % (WAVE_SIZE);
     const int wmma_lane = (threadIdx.x % 16);
     for (int wave_off = 0; wave_off < ((m * n) / (ROCWMMA_M * ROCWMMA_N) + N_WAVES - 1) / N_WAVES; wave_off++)
     {
-        int wave_xy = wave_id + wave_off * N_WAVES;
+        int wave_xy = __builtin_amdgcn_readfirstlane(wave_id + wave_off * N_WAVES);
 
-        int wave_x = wave_xy % (n / ROCWMMA_N);
-        int wave_y = wave_xy / (n / ROCWMMA_N);
+        int wave_x = __builtin_amdgcn_readfirstlane(wave_xy % (n / ROCWMMA_N));
+        int wave_y = __builtin_amdgcn_readfirstlane(wave_xy / (n / ROCWMMA_N));
 
-        int blk_x = wave_x * ROCWMMA_N;
-        int blk_y = wave_y * ROCWMMA_M;
+        int blk_x = __builtin_amdgcn_readfirstlane(wave_x * ROCWMMA_N);
+        int blk_y = __builtin_amdgcn_readfirstlane(wave_y * ROCWMMA_M);
 
         int wmma_k_end = (mask_k_start / (ROCWMMA_K * 2)) * ROCWMMA_K * 2;
 
@@ -347,8 +353,8 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
     const int Tr_i = blockIdx.z;
     if (Tr_i >= Tr)
         return;
-    const int ele_y = Tr_i * Br;
-    const int yb = ele_y + Br;
+    const int ele_y = __builtin_amdgcn_readfirstlane(Tr_i * Br);
+    const int yb = __builtin_amdgcn_readfirstlane(ele_y + Br);
     const int tx = threadIdx.x;
 
     extern __shared__ ComputeType sram[];
@@ -569,6 +575,7 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
 // =================================================================================
 
 __global__ void
+__launch_bounds__(WAVE_SIZE *N_WAVES)
 bwd_kernel(
     ComputeType *__restrict__ q,  // [(b*h) x N x d]
     ComputeType *__restrict__ k,  // [(b*h) x N x d]

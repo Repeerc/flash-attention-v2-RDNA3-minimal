@@ -44,27 +44,12 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
     build_directory=build_path,
 )
 
-
-
-def pad_to_multiple(tensor, multiple, dim=-1, val = 0):
-    length = tensor.size(dim)
-    remainder = length % multiple
-    if remainder == 0:
-        return tensor
-    padding_length = multiple - remainder
-    padding_shape = list(tensor.shape)
-    padding_shape[dim] = padding_length
-    padding_tensor = torch.zeros(padding_shape, device=tensor.device, dtype=tensor.dtype) + val
-    return torch.cat([tensor, padding_tensor], dim=dim)
-
 class FlashAttentionFunction(torch.autograd.Function):
-    
+
     @staticmethod
     @torch.no_grad()
     def forward(ctx, q, k, v, mask=None, causal=None, *args, **kwargs):
-        Br = 64
-        Bc = 256
-        
+
         B = q.shape[0]
         H = q.shape[1]
         N = q.shape[2]
@@ -72,35 +57,40 @@ class FlashAttentionFunction(torch.autograd.Function):
         Nkv = k.shape[2]
         scale = D**-0.5
 
-        q = pad_to_multiple(q, 256, 2, -1)
-        k = pad_to_multiple(k, 256, 2, -100)
-        v = pad_to_multiple(v, 256, 2)
-        
-        o = torch.zeros_like(q)
-        
-        ret = flash_attn_wmma.forward(q,k,v,64,256, causal)
-        o = ret[0]
-        L = ret[1]
+        Br = 64
+        Bc = 128
+        if D > 384:
+           Br = 32 
+           
+        ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal, scale)
 
-        ctx.args = (causal, scale, mask, Br, Bc, N, Nkv)
-        ctx.save_for_backward(q, k, v, o, L)
+        o, q_bwd, k_bwd, v_bwd, o_bwd, L = ret
 
-        return o[:,:,:N,:]
+        ctx.args = (causal, scale, mask, N, Nkv, D, Br, Bc)
+        ctx.save_for_backward(q_bwd, k_bwd, v_bwd, o_bwd, L)
+
+        return o
 
     @staticmethod
     @torch.no_grad()
     def backward(ctx, do):
-        causal, scale, mask, Br, Bc, N, Nkv = ctx.args
+        causal, scale, mask, N, Nkv, D, Br, Bc = ctx.args
         q, k, v, o, L = ctx.saved_tensors
-    
-        do = pad_to_multiple(do, 256, 2)
-        
-        k[:,:,Nkv:,:] = -0.1
-        #q[:,:,N:,:] = 0
-        
-        dQ, dK, dV = flash_attn_wmma.backward(q, k, v, o, do, L, 256, 64,causal)
-        
-        return dQ[:,:,:N,:], dK[:,:,:Nkv,:], dV[:,:,:Nkv,:], None, None
+
+        Br = 128
+        Bc = 64
+        if D > 512:
+            Br = 128
+            Bc = 32
+        elif D > 256:
+            Br = 256
+            Bc = 32
+
+        dQ, dK, dV = flash_attn_wmma.backward(
+            q, k, v, o, do, L, N, Nkv, D, Br, Bc, causal, scale
+        )
+
+        return dQ, dK, dV, None, None
 
 
 #(B, H, N, D) = 1, 20, 576, 64
@@ -108,8 +98,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 from triton_fused_attention import _attention
 triton_fttn = _attention.apply
 
-(B, H, N, D) = 1, 20, 512, 64
-Nkv = 512
+(B, H, N, D) = 1, 24, 1024, 64
+Nkv = 1024
 dtype = torch.float16
 
 ref_sdp_dtype = torch.float16
@@ -119,21 +109,21 @@ if __name__ == "__main__":
     
     # qkv for rocwmma fttn, q2k2v2 for sdp as reference, q3k3v3 for triton fttn.
     # 
-    q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")   # * 5
-    k = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") # * 75
-    v = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") # * 15
+    q = torch.rand((B, H, N, D), dtype=ref_sdp_dtype, device="cuda")   # * 5
+    k = torch.rand((B, H, Nkv, D), dtype=ref_sdp_dtype, device="cuda") # * 75
+    v = torch.rand((B, H, Nkv, D), dtype=ref_sdp_dtype, device="cuda") # * 15
 
-    q.requires_grad_(True)
-    k.requires_grad_(True)
-    v.requires_grad_(True)
-
-    q2 = q.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
-    k2 = k.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
-    v2 = v.clone().detach().to(ref_sdp_dtype).requires_grad_(True)
+    q2 = q.clone().detach().requires_grad_(True)
+    k2 = k.clone().detach().requires_grad_(True)
+    v2 = v.clone().detach().requires_grad_(True)
     
-    q3 = q.clone().detach().requires_grad_(True)
-    k3 = k.clone().detach().requires_grad_(True)
-    v3 = v.clone().detach().requires_grad_(True)
+    q3 = q.clone().detach().to(dtype).requires_grad_(True)
+    k3 = k.clone().detach().to(dtype).requires_grad_(True)
+    v3 = v.clone().detach().to(dtype).requires_grad_(True)
+    
+    q = q.to(dtype).requires_grad_(True)
+    k = k.to(dtype).requires_grad_(True)
+    v = v.to(dtype).requires_grad_(True)
 
     fttn = FlashAttentionFunction()
     o1 = fttn.apply(q, k, v,None, causal)

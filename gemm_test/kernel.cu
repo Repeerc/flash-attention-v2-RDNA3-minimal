@@ -37,8 +37,8 @@ __global__ void gemm_kernel(
     float16_t *__restrict__ D,
     int m, int n, int k)
 {
-    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragA[4];
-    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[4];
+    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragA[1];
+    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[1];
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
     // asm volatile("s_sleep 0");
@@ -56,15 +56,15 @@ __global__ void gemm_kernel(
         if ((blk_x < n) && (blk_y < m))
         {
             rocwmma::fill_fragment(fragACC, (float32_t)0.0);
-            for (int i = 0; i < k; i += ROCWMMA_K * 2)
+            for (int i = 0; i < k; i += ROCWMMA_K * 1)
             {
                 rocwmma::load_matrix_sync(fragA[0], A + (blk_y * k + i), k);
-                // rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n); // A @ B
-                rocwmma::load_matrix_sync(fragB[0], B + (blk_x * k + i), k); // A @ B.T
+                rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n); // A @ B
+                // rocwmma::load_matrix_sync(fragB[0], B + (blk_x * k + i), k); // A @ B.T
 
-                rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i + 1 * ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i + 1 * ROCWMMA_K)), k);
                 // rocwmma::load_matrix_sync(fragB[1], B + ((i + 1*ROCWMMA_K) * n + blk_x), n);  // A @ B
-                rocwmma::load_matrix_sync(fragB[1], B + (blk_x * k + (i + 1 * ROCWMMA_K)), k); // A @ B.T
+                // rocwmma::load_matrix_sync(fragB[1], B + (blk_x * k + (i + 1 * ROCWMMA_K)), k); // A @ B.T
 
                 // rocwmma::load_matrix_sync(fragA[2], A + (blk_y * k + (i+2*ROCWMMA_K)), k);
                 // rocwmma::load_matrix_sync(fragB[2], B + ((i + 2*ROCWMMA_K) * n + blk_x), n);
@@ -72,7 +72,7 @@ __global__ void gemm_kernel(
                 // rocwmma::load_matrix_sync(fragB[3], B + ((i + 3*ROCWMMA_K) * n + blk_x), n);
 
                 rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
-                rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
                 // rocwmma::mma_sync(fragACC, fragA[2], fragB[2], fragACC);
                 // rocwmma::mma_sync(fragACC, fragA[3], fragB[3], fragACC);
             }
