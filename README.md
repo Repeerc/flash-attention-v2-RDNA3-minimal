@@ -29,7 +29,7 @@ webui: https://github.com/Repeerc/sd-webui-flash-attention-zluda-win
 - [x] backward pass
 - [x] causal mask (need more optimization)
 - [ ] unaligned 32x seqlen padding optimization
-- [ ] Load tile into LDS (for BHND format) and fix bank conflict
+- [ ] Load tile into LDS (for BHND format (rearrange in kernel)) and fix bank conflict
 - [ ] attention bias
 - [ ] matrix multiplication optimization
 - [ ] fix poor performance in BF16
@@ -59,17 +59,27 @@ CK-based flash attention windows porting: https://github.com/Repeerc/flash-attn-
 
 ### seqlen with 32x aligened 
 
-![10633e971ef4c4d77cad7d88b2444d04](https://github.com/user-attachments/assets/dbc5df50-7047-402c-ac2e-5575d1675891)
+![61329a7039c7a20460768411ecf76ce8](https://github.com/user-attachments/assets/3c85eee2-3630-44d3-9f54-c1f15cecbd32)
 
-![6aafe509d9acbe34a610bd4c548d5a14](https://github.com/user-attachments/assets/ab75356e-9e64-4637-aefe-1fc36d9bd412)
+![412d57e698d5325f87d4a0ca1da589f7](https://github.com/user-attachments/assets/b8d13e2a-d9e5-48c2-aec5-24cdecef54b3)
+
+#### [B N H D] format rearrange and contiguous to [B H N D]
+
+![56313eca54a55a7b7c2debaa439ee6c4](https://github.com/user-attachments/assets/3d58e0d5-ebca-48ac-9dd4-f572f89a61c7)
+
+![087daf4632b92f1de1fbcde9e84cf81a](https://github.com/user-attachments/assets/24f9a5da-8931-41ee-884f-e87ca9677f68)
 
 ### seqlen without 32x aligened 
 
-![b5f625b6706e6dcf8006c2614badda5a](https://github.com/user-attachments/assets/1d9428fb-fbd9-4ed2-b98d-c1f09ef96e1e)
+![d470b660f4018cdb3325a5b1f7489537](https://github.com/user-attachments/assets/f9f6603f-cd9e-4c2d-b6af-152b9de27c44)
+
+#### [B N H D] format rearrange and contiguous to [B H N D]
+
+![8804f65c4e8a5c33eda45034bebcb9e7](https://github.com/user-attachments/assets/9b6e73f1-8ea2-40e7-b58d-f69ca5bebcc4)
 
 ### fwd+bwd
 
-![49dcd74bff518fb0e63ee14675f3e54f](https://github.com/user-attachments/assets/5a3d62c2-541f-4128-8d49-533fa3456e6a)
+![84ef4f7d7ec6a1158a0a5c31759aafec](https://github.com/user-attachments/assets/01ad13c9-a383-48ef-abc2-5154751db2c3)
 
 ### FP16, causal = True
 
