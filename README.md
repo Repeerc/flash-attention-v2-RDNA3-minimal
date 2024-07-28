@@ -59,15 +59,15 @@ CK-based flash attention windows porting: https://github.com/Repeerc/flash-attn-
 
 ### seqlen with 32x aligened 
 
-![61329a7039c7a20460768411ecf76ce8](https://github.com/user-attachments/assets/3c85eee2-3630-44d3-9f54-c1f15cecbd32)
+![f487a9936a4cc0f0f76fedef7eae7fc9](https://github.com/user-attachments/assets/7381b407-eac0-4295-b4d2-baf249254734)
 
 ![412d57e698d5325f87d4a0ca1da589f7](https://github.com/user-attachments/assets/b8d13e2a-d9e5-48c2-aec5-24cdecef54b3)
 
 #### [B N H D] format rearrange and contiguous to [B H N D]
 
-![56313eca54a55a7b7c2debaa439ee6c4](https://github.com/user-attachments/assets/3d58e0d5-ebca-48ac-9dd4-f572f89a61c7)
+![5d3b4ad403dda0d84d430d69435b7c6f](https://github.com/user-attachments/assets/5e9f217b-342e-4195-9791-cc799bd6c3b1)
 
-![087daf4632b92f1de1fbcde9e84cf81a](https://github.com/user-attachments/assets/24f9a5da-8931-41ee-884f-e87ca9677f68)
+![ce9f235ada83a6147db9f5fc36040e19](https://github.com/user-attachments/assets/ca123479-4c18-4086-b18f-618f8bd5de13)
 
 ### seqlen without 32x aligened 
 
@@ -75,7 +75,7 @@ CK-based flash attention windows porting: https://github.com/Repeerc/flash-attn-
 
 #### [B N H D] format rearrange and contiguous to [B H N D]
 
-![8804f65c4e8a5c33eda45034bebcb9e7](https://github.com/user-attachments/assets/9b6e73f1-8ea2-40e7-b58d-f69ca5bebcc4)
+![87475a48c0bb91aa44cb39564dbc2baf](https://github.com/user-attachments/assets/7652bd9d-aa43-4685-8393-325f92a12ce7)
 
 ### fwd+bwd
 
