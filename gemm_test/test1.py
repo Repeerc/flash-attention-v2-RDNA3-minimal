@@ -29,7 +29,7 @@ gemmTest1 = torch.utils.cpp_extension.load(
     name="gemmTest1",
     sources=src_code,
     extra_cuda_cflags=[
-        "-Ofast",
+        "-O1",
         "-save-temps",
         "-DROCWMMA_ARCH_GFX1100=1",
         "-DROCWMMA_ARCH_GFX1101=1",
@@ -61,7 +61,6 @@ print(D2.cpu())
 print(D.cpu())
 print(max_diff)
 
-
 for _ in range(10):
     D2 = gemmTest1.forward(A, B, C, m, n, k)
 for _ in range(10):
@@ -87,4 +86,3 @@ for i in range(round):
 torch.cuda.synchronize()
 t1 = time.time() - t0
 print("wmma:", t1)
-

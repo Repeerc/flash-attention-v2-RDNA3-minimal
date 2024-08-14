@@ -22,7 +22,7 @@ os.environ["PYTORCH_ROCM_ARCH"] = "gfx1100" #;gfx1101;gfx1102;gfx1103"
 src_Path = os.path.split(os.path.realpath(__file__))[0]
 build_path = os.path.join(src_Path, "build")
 os.makedirs(build_path, exist_ok=True)
-src_code = ["host.cpp", "kernel.cu"]
+src_code = ["host.cpp", "kernel_bf16.cu"]
 src_code = [os.path.join(src_Path, x) for x in src_code]
 import torch.utils.cpp_extension
 
@@ -90,7 +90,7 @@ q_shape = (B, H, N, D)
 v_shape = (B, H, N, D)
 k_shape = (B, H, N, D)
 causal = False
-dtype = torch.float16
+dtype = torch.bfloat16
 
 
 
@@ -128,7 +128,7 @@ class FlashAttentionFunction(torch.autograd.Function):
         q, k, v, o, L = ctx.saved_tensors
         
         Br = 128
-        Bc = 64
+        Bc = 128
         
         dQ, dK, dV = flash_attn_wmma.backward(q, 
                                               k,
@@ -196,9 +196,9 @@ for i in range(1,11,1):
     v_shape = (B, H, N, D)
     k_shape = (B, H, N, D)
     print(f'B:{B}, H:{H}, SeqLen:{N}, DimHead:{D}')
-    q = torch.rand(q_shape, dtype=dtype, device="cuda") #  * 5
-    k = torch.rand(k_shape, dtype=dtype, device="cuda") #  * 80
-    v = torch.rand(v_shape, dtype=dtype, device="cuda") #  * 30
+    q = torch.rand(q_shape, dtype=dtype, device="cuda")    * 5
+    k = torch.rand(k_shape, dtype=dtype, device="cuda")    * 80
+    v = torch.rand(v_shape, dtype=dtype, device="cuda")    * 30
     
     q.requires_grad_(True)
     k.requires_grad_(True)

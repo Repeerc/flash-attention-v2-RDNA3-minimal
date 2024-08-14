@@ -116,8 +116,8 @@ class FlashAttentionFunction(torch.autograd.Function):
 import triton
 
 
-(B, H, N, D) = 2, 10, 4096, 64
-Nkv = 256
+(B, H, N, D) = 2, 10, 1024, 512
+Nkv = 512
 
 dtype = torch.float16
 ref_sdp_dtype = torch.float16

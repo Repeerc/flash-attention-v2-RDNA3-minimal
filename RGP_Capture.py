@@ -44,28 +44,52 @@ flash_attn_wmma = torch.utils.cpp_extension.load(
 )
 
 
+os.add_dll_directory(os.path.join( os.environ['HIP_PATH'] , 'bin')) 
+from ck_fttn import ck_fttn_pyb
+
+
+
+(B, H, N, D) = 1, 24, 4096, 64
+Nkv = 4096
+dtype = torch.float16
+
+sc = D**-0.5
+causal = False
+
+q = torch.rand((B,  N,   H, D), dtype=dtype, device="cuda")    
+k = torch.rand((B,  Nkv, H, D), dtype=dtype, device="cuda") 
+v = torch.rand((B,  Nkv, H, D), dtype=dtype, device="cuda")  
+
+ret =  ck_fttn_pyb.fwd(q,k,v, None, 0, sc, causal, False, None) # BNHD
+
+ret =  ck_fttn_pyb.fwd(q,k,v, None, 0, sc, causal, False, None) # BNHD
+
+
+# time.sleep(3)
+# exit()
+
 def fwd(q,k,v):
     Br = 64
-    Bc = 128
+    Bc = 256
     scale = q.shape[-1]**-0.5
     causal = False
     ret = flash_attn_wmma.forward(q, k, v, Br, Bc, causal, scale)
     return ret
     
 
-(B, H, N, D) = 1, 20, 4096, 64
-Nkv = 4096
-dtype = torch.float16
-ref_sdp_dtype = torch.float16
-causal = False
-
-
 q = torch.rand((B, H, N, D), dtype=dtype, device="cuda")    
 k = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda") 
 v = torch.rand((B, H, Nkv, D), dtype=dtype, device="cuda")  
-dO = torch.ones_like(q)
 
 o, qpad,kpad,vpad,opad,L = fwd(q,k,v)
+
+print(ret)
+print(o)
+
+time.sleep(3)
+exit()
+
+dO = torch.ones_like(q)
 dQ, dK, dV = flash_attn_wmma.backward(
     q, k, v, o, dO, L, N, Nkv, D, 128, 64, causal, q.shape[-1] ** -0.5
 )

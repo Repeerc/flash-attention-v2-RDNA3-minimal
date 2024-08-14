@@ -32,7 +32,7 @@ webui: https://github.com/Repeerc/sd-webui-flash-attention-zluda-win
 - [ ] Load tile into LDS (for BHND format (rearrange in kernel)) and fix bank conflict
 - [ ] attention bias
 - [ ] matrix multiplication optimization
-- [ ] fix poor performance in BF16
+- [x] fix poor performance in BF16
 - [ ] ...
 
 # Benchmark

@@ -43,21 +43,25 @@ constexpr int ROCWMMA_M = 16;
 constexpr int ROCWMMA_N = 16;
 constexpr int ROCWMMA_K = 16;
 
-constexpr int N_WAVES = 16;
+//constexpr int N_WAVES = 16;
 constexpr int WAVE_SIZE = 32;
 
 
 typedef _Float16 fp16_frag __attribute__((ext_vector_type(16)));
 typedef float fp32_frag __attribute__((ext_vector_type(8)));
 typedef _Float16 half8 __attribute__((ext_vector_type(8)));
-#define HALF16(pointer) (reinterpret_cast<fp16_frag *>((void *)&(pointer))[0])
+typedef _Float16 half16 __attribute__((ext_vector_type(16)));
+#define HALF16(pointer) (reinterpret_cast<half16 *>((void *)&(pointer))[0])
 #define HALF8(pointer) (reinterpret_cast<half8 *>((void *)&(pointer))[0])
 typedef float float8 __attribute__((ext_vector_type(8)));
+typedef float float_v16 __attribute__((ext_vector_type(16)));
 #define FLOAT8(pointer) (reinterpret_cast<float8 *>((void *)&(pointer))[0])
+#define FLOATV16(pointer) (reinterpret_cast<float_v16 *>((void *)&(pointer))[0])
 #define FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 
 //================================ Matrix multiplication ===============================
 // C = (A^T)B + C
+template <int N_WAVES>
 __device__ void mul_add_AT_B(
     ComputeType *__restrict__ A,
     ComputeType *__restrict__ B,
@@ -104,7 +108,7 @@ __device__ void mul_add_AT_B(
     }
     //__syncthreads();
 }
-
+ 
 // C = A @ (B^T)
 /*
 __device__ void mul_A_BT(
@@ -154,7 +158,7 @@ __device__ void mul_A_BT(
 }
 */
 
-
+template <int N_WAVES>
 __device__ void mul_A_BT(
     float16_t *__restrict__ A,
     float16_t *__restrict__ B,
@@ -192,9 +196,15 @@ __device__ void mul_A_BT(
 
                 fragA[1] = HALF16((A + (blk_y * k + i + ROCWMMA_K))[wmma_lane * k]);
                 fragB[1] = HALF16((B + (blk_x * k + i + ROCWMMA_K))[wmma_lane * k]);
+                // fragA[2] = HALF16((A + (blk_y * k + i + 2*ROCWMMA_K))[wmma_lane * k]);
+                // fragB[2] = HALF16((B + (blk_x * k + i + 2*ROCWMMA_K))[wmma_lane * k]);
+                // fragA[3] = HALF16((A + (blk_y * k + i + 3*ROCWMMA_K))[wmma_lane * k]);
+                // fragB[3] = HALF16((B + (blk_x * k + i + 3*ROCWMMA_K))[wmma_lane * k]);
 
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[0], fragB[0], fragACC);
                 fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[1], fragB[1], fragACC);
+                // fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[2], fragB[2], fragACC);
+                // fragACC = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(fragA[3], fragB[3], fragACC);
             }
             fragACC = fragACC * scale;
             __syncthreads();
@@ -209,8 +219,8 @@ __device__ void mul_A_BT(
     // asm volatile("s_sleep 0");
 }
 
-// C = AB + C
 
+template <int N_WAVES>
 __device__ void mul_add_A_B(
     ComputeType *__restrict__ A,
     ComputeType *__restrict__ B,
@@ -243,9 +253,15 @@ __device__ void mul_add_A_B(
                 rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n);
                 rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i + 1 * ROCWMMA_K)), k);
                 rocwmma::load_matrix_sync(fragB[1], B + ((i + 1 * ROCWMMA_K) * n + blk_x), n);
+                // rocwmma::load_matrix_sync(fragA[2], A + (blk_y * k + (i + 2 * ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragB[2], B + ((i + 2 * ROCWMMA_K) * n + blk_x), n);
+                // rocwmma::load_matrix_sync(fragA[3], A + (blk_y * k + (i + 3 * ROCWMMA_K)), k);
+                // rocwmma::load_matrix_sync(fragB[3], B + ((i + 3 * ROCWMMA_K) * n + blk_x), n);
 
                 rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
                 rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[2], fragB[2], fragACC);
+                // rocwmma::mma_sync(fragACC, fragA[3], fragB[3], fragACC);
             }
             rocwmma::load_matrix_sync(fragC, C + (blk_y * n + blk_x), n, rocwmma::mem_row_major);
             for (int i = 0; i < fragC.num_elements; ++i)
@@ -259,6 +275,7 @@ __device__ void mul_add_A_B(
 }
 
 // C = AB + C
+template <int N_WAVES>
 __device__ void mul_add_A_B_mask_k(
     ComputeType *__restrict__ A,
     ComputeType *__restrict__ B,
@@ -328,9 +345,9 @@ __device__ void mul_add_A_B_mask_k(
 
 // =========================================================================================
 
-template <bool pad_mask, bool causal>
+template <bool pad_mask, bool causal, int N_WAVES>
 __global__ void
-__launch_bounds__(WAVE_SIZE *N_WAVES)
+__launch_bounds__(WAVE_SIZE * N_WAVES)
     fwd_kernel(
         ComputeType *__restrict__ q,
         ComputeType *__restrict__ k,
@@ -361,7 +378,7 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
     ComputeType *__restrict__ Si = &sram[0];       // Br * Bc
     ComputeType *__restrict__ Oi = &sram[Br * Bc]; // Br * d
     // ComputeType *__restrict__ Qi = &sram[Br * Bc + Br * d]; // Br * d
-    // ComputeType *__restrict__ Vj = &sram[Br * Bc + 2*Br * d + 8]; // Bc * d
+    // ComputeType *__restrict__ Vj = &sram[Br * Bc + Br * d]; // Bc * d
 
     if (tx < Br)
     {
@@ -407,13 +424,13 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
         //------------ Sij = Qi @ Kj^T
         if constexpr (!causal)
         {
-            mul_A_BT(Qi, Kj, Si, Br, Bc, d, scale);
+            mul_A_BT<N_WAVES>(Qi, Kj, Si, Br, Bc, d, scale);
         }
         else
         {
             if (ele_y >= ele_x)
             {
-                mul_A_BT(Qi, Kj, Si, Br, Bc, d, scale);
+                mul_A_BT<N_WAVES>(Qi, Kj, Si, Br, Bc, d, scale);
                 __syncthreads();
             }
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
@@ -450,20 +467,17 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
         if (tx < Br)
         {
 // --------------------- find every row max val in Si[Br * Bc]
-#pragma unroll 4
-            for (int i = 0; i < Bc; i += 8)
+                float16_t val16 = row_max_new;
+#pragma unroll 2
+            for (int i = 0; i < Bc; i += 16)
             {
-                half8 val = HALF8(Si[(tx * Bc) + i]);
-                float8 val_f32;
-#pragma unroll
-                for (int j = 0; j < 8; j++)
-                    val_f32[j] = val[j];
+                half16 val = HALF16(Si[(tx * Bc) + i]);
 
 #pragma unroll
-                for (int j = 0; j < 8; j++)
-                    row_max_new = max(row_max_new, val_f32[j]);
+                for (int j = 0; j < 16; j++)
+                    val16 = max(val16, val[j]); // V_PK_MAX_F16
             }
-
+            row_max_new = val16;
 
             row_max_new = max(row_max_old, row_max_new);
             rowmax_diff_exp = exp2f(row_max_old - row_max_new);
@@ -471,66 +485,55 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
 
 //--------------------Calc Pi = exp(Si - mi) and rowsum
 #pragma unroll 4
-            for (int i = 0; i < Bc; i += 8)
+            for (int i = 0; i < Bc; i += 16)
             {
-                half8 val = HALF8(Si[(tx * Bc) + i]);
-                float8 val_f32;
+                half16 val = HALF16(Si[(tx * Bc) + i]);
+                float_v16 val_f32;
 #pragma unroll // Load fp16 into VGPRs and convert to FP32
-                for (int j = 0; j < 8; j++)
+                for (int j = 0; j < 16; j++)
                     val_f32[j] = val[j];
 // Si - mi
                 val_f32 = val_f32 - row_max_new;
 #pragma unroll // exp but using exp2 instead.
-                for (int j = 0; j < 8; j++)
+                for (int j = 0; j < 16; j++)
                     val_f32[j] = exp2f(val_f32[j]);
 
 #pragma unroll // calc rowsum
-                for (int j = 0; j < 8; j++)
+                for (int j = 0; j < 16; j++)
                     row_sum += val_f32[j];
 
 #pragma unroll // convert back to fp16
-                for (int j = 0; j < 8; j++)
+                for (int j = 0; j < 16; j++)
                     val[j] = val_f32[j];
 
                // write back
-                HALF8(Si[(tx * Bc) + i]) = val;
+                HALF16(Si[(tx * Bc) + i]) = val;
             }
-
             l_i = rowmax_diff_exp * l_i + row_sum;
 
 // --------------------- calc: Oi *= exp2f(row_max_old - row_max_new)
 #pragma unroll 4
-            for (int i = 0; i < d; i += 8)
+            for (int i = 0; i < d; i += 16)
             {
-                half8 val = HALF8(Oi[(tx * d) + i]);
-                float8 val_f32;
-#pragma unroll
-                for (int j = 0; j < 8; j++)
-                    val_f32[j] = val[j];
-
-                val_f32 = val_f32 * rowmax_diff_exp;
-
-#pragma unroll
-                for (int j = 0; j < 8; j++)
-                    val[j] = val_f32[j];
-                    
-                HALF8(Oi[(tx * d) + i]) = val;
+                half16 val = HALF16(Oi[(tx * d) + i]); 
+                val = val * rowmax_diff_exp; // V_PK_MUL_F16 
+                HALF16(Oi[(tx * d) + i]) = val;
             }
 // --------------------- 
         }
         __syncthreads();
 
         if constexpr (!pad_mask)
-            mul_add_A_B(Si, Vj, Oi, Br, d, Bc);
+            mul_add_A_B<N_WAVES>(Si, Vj, Oi, Br, d, Bc);
         else
         {
             if (unlikely(xr > nkv))
             {
-                mul_add_A_B_mask_k(Si, Vj, Oi, Br, d, Bc, Bc - (xr - nkv));
+                mul_add_A_B_mask_k<N_WAVES>(Si, Vj, Oi, Br, d, Bc, Bc - (xr - nkv));
             }
             else
             {
-                mul_add_A_B(Si, Vj, Oi, Br, d, Bc);
+                mul_add_A_B<N_WAVES>(Si, Vj, Oi, Br, d, Bc);
             }
         }
 
@@ -545,22 +548,22 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
 
 //------------------------ Calc: Oi /= li  Write back: Oi
 #pragma unroll 4
-            for (int i = 0; i < d; i += 8)
+            for (int i = 0; i < d; i += 16)
             {
-                half8 val = HALF8(Oi[(tx * d) + i]);
-                float8 val_f32;
-#pragma unroll
-                for (int j = 0; j < 8; j++)
-                    val_f32[j] = val[j];
+                half16 val = HALF16(Oi[(tx * d) + i]);
+                // float8 val_f32;
+// #pragma unroll
+                // for (int j = 0; j < 8; j++)
+                    // val_f32[j] = val[j];
 
-                val_f32 = val_f32 / l_i;
+                val = val / l_i;
 
-#pragma unroll
-                for (int j = 0; j < 8; j++)
-                    val[j] = val_f32[j];
+// #pragma unroll
+                // for (int j = 0; j < 8; j++)
+                    // val[j] = val_f32[j];
                     
                 //HALF8(Oi[(tx * d) + i]) = val;
-                HALF8((&(o[q_offset + Tr_i * Br * d]))[tx * d + i]) = val;
+                HALF16((&(o[q_offset + Tr_i * Br * d]))[tx * d + i]) = val;
             }
 
 // #pragma unroll 4
@@ -574,6 +577,7 @@ __launch_bounds__(WAVE_SIZE *N_WAVES)
 }
 // =================================================================================
 
+template <int N_WAVES>
 __global__ void
 __launch_bounds__(WAVE_SIZE *N_WAVES)
 bwd_kernel(
@@ -661,7 +665,7 @@ bwd_kernel(
         int yb = ele_y + Br;
         int xr = ele_x + Bc;
 
-        mul_A_BT(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
+        mul_A_BT<N_WAVES>(Qi, Kj, Si, Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
         __syncthreads();
         if (unlikely(causal))
         {
@@ -729,8 +733,8 @@ bwd_kernel(
         }
         __syncthreads();
 
-        mul_add_AT_B(Pi, dOi, dVj, Bc, d, Br, 1); // Pi[Br x Bc] @ dOi[Br x d]
-        mul_A_BT(dOi, Vj, dPi, Br, Bc, d, 1);  // dPi:[Br x Bc]
+        mul_add_AT_B<N_WAVES>(Pi, dOi, dVj, Bc, d, Br, 1); // Pi[Br x Bc] @ dOi[Br x d]
+        mul_A_BT<N_WAVES>(dOi, Vj, dPi, Br, Bc, d, 1);  // dPi:[Br x Bc]
         __syncthreads();
         if (tx < Br)
         {
@@ -741,8 +745,8 @@ bwd_kernel(
             }
         }
         __syncthreads();
-        mul_add_A_B(dSi, Kj, dQi, Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
-        mul_add_AT_B(dSi, Qi, dKj, Bc, d, Br, 0.69314718f); // dSi[Br x Bc] @ Qi[Br x d]
+        mul_add_A_B<N_WAVES>(dSi, Kj, dQi, Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
+        mul_add_AT_B<N_WAVES>(dSi, Qi, dKj, Bc, d, Br, 0.69314718f); // dSi[Br x Bc] @ Qi[Br x d]
         __syncthreads();
     }
 }
@@ -800,6 +804,10 @@ std::vector<torch::Tensor> forward(
     auto opt2 = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
     auto L = torch::zeros({b, h, n + Nq_pad_sz}, opt2);
 
+    int N_WAVES = 16;
+    if(d + d_pad_sz == 128)
+        N_WAVES = 32;
+
     auto blockDim = dim3(WAVE_SIZE * N_WAVES);
     int nblk = b * h * Tr;
     int trPad = 96 - (nblk % 96); // TODO: 96 CU only for gfx1100
@@ -829,14 +837,28 @@ std::vector<torch::Tensor> forward(
 
     cudaError_t err = cudaGetLastError();
 
-    if (!pad_mask && !causal)
-        fwd_kernel<false, false><<<gridDim, blockDim, sram_sz>>>(para_fwd);
-    else if (pad_mask && causal)
-        fwd_kernel<true, true><<<gridDim, blockDim, sram_sz>>>(para_fwd);
-    else if (!pad_mask && causal)
-        fwd_kernel<false, true><<<gridDim, blockDim, sram_sz>>>(para_fwd);
-    else if (pad_mask && !causal)
-        fwd_kernel<true, false><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+    if(N_WAVES == 32)
+    {
+        if (!pad_mask && !causal)
+            fwd_kernel<false, false,32><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (pad_mask && causal)
+            fwd_kernel<true, true,32><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (!pad_mask && causal)
+            fwd_kernel<false, true,32><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (pad_mask && !causal)
+            fwd_kernel<true, false,32><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+    }else if(N_WAVES == 16)
+    {
+        if (!pad_mask && !causal)
+            fwd_kernel<false, false,16><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (pad_mask && causal)
+            fwd_kernel<true, true,16><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (!pad_mask && causal)
+            fwd_kernel<false, true,16><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+        else if (pad_mask && !causal)
+            fwd_kernel<true, false,16><<<gridDim, blockDim, sram_sz>>>(para_fwd);
+    }
+
 
     err = cudaGetLastError();
     if (err != hipSuccess)
@@ -912,7 +934,7 @@ std::vector<torch::Tensor> backward(
     int nblk = b * h * Tc;
     int tcPad = 96 - (nblk % 96); // TODO: 96 CU only for gfx1100
     auto gridDim = dim3(b, h, Tc + tcPad);
-    auto blockDim = dim3(WAVE_SIZE * N_WAVES);
+    auto blockDim = dim3(WAVE_SIZE * 16);
 
     const int sram_sz =
         2 * Br * Bc * sizeof(ComputeType) // (Si,Pi,dSi), dPi
@@ -921,7 +943,7 @@ std::vector<torch::Tensor> backward(
 
     cudaError_t err = cudaGetLastError();
 
-    bwd_kernel<<<gridDim, blockDim, sram_sz>>>(
+    bwd_kernel<16><<<gridDim, blockDim, sram_sz>>>(
         (ComputeType *)Q.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)K.data_ptr<AT_PTR_TYPE>(),
         (ComputeType *)V.data_ptr<AT_PTR_TYPE>(),

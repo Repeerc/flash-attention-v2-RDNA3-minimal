@@ -23,7 +23,7 @@ const int ROCWMMA_M = 16;
 const int ROCWMMA_N = 16;
 const int ROCWMMA_K = 16;
 
-const int N_WAVES = 32;
+const int N_WAVES = 1;
 const int WAVE_SIZE = 32;
 
 #define ComputeType float16_t
@@ -59,7 +59,9 @@ __global__ void gemm_kernel(
             for (int i = 0; i < k; i += ROCWMMA_K * 1)
             {
                 rocwmma::load_matrix_sync(fragA[0], A + (blk_y * k + i), k);
+                asm volatile("s_sleep 1");
                 rocwmma::load_matrix_sync(fragB[0], B + (i * n + blk_x), n); // A @ B
+                asm volatile("s_sleep 2");
                 // rocwmma::load_matrix_sync(fragB[0], B + (blk_x * k + i), k); // A @ B.T
 
                 // rocwmma::load_matrix_sync(fragA[1], A + (blk_y * k + (i + 1 * ROCWMMA_K)), k);
