@@ -3,8 +3,20 @@ a simple Flash Attention v2 implementation with ROCM (RDNA3 GPU, roc wmma), main
 
 # Build and Test
 
+minimum integration:
+
+```
+──rocwmma_fattn
+   │  FlashAttn.py
+   │  host.cpp
+   │  kernel_bf16.cu
+   │  kernel_fp16.cu
+   └─ zluda_hijack_torch_hip_ext.py
+```
+
 ### Linux with rocm:
-just run ```python bench_with_sdpa.py```
+
+run test: ```python bench_with_sdpa.py```
 
 ### Windows with zluda
 
@@ -29,7 +41,7 @@ webui: https://github.com/Repeerc/sd-webui-flash-attention-zluda-win
 - [x] backward pass
 - [x] causal mask (need more optimization)
 - [ ] unaligned 32x seqlen padding optimization
-- [ ] Load tile into LDS (for BHND format (rearrange in kernel)) and fix bank conflict
+- [ ] Load tile into LDS
 - [ ] attention bias
 - [ ] matrix multiplication optimization
 - [x] fix poor performance in BF16
@@ -41,7 +53,7 @@ OS: Windows 11
 
 GPU: 7900xtx (gfx1100)
 
-PyTorch 2.2.1 + CU118 ZLUDA, Python 3.10
+PyTorch 2.2.1 + CU118 ZLUDA, Python 3.10, HIP 5.7.1
 
 ### FP16, causal = False
 

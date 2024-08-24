@@ -9,7 +9,7 @@ import os, sys
 
 
 if sys.platform.startswith("win32"):
-    import zluda_hijack_torch_hip_ext
+    import rocwmma_fattn.zluda_hijack_torch_hip_ext as zluda_hijack_torch_hip_ext
 
     torch.utils.cpp_extension.IS_HIP_EXTENSION = True
     torch.version.hip = "5.7.0"
