@@ -31,10 +31,10 @@ def pad_to_multiple(tensor, multiple, dim=-1, val=0):
 import triton
 
 
-(B, H, N, D) = 2, 10, 1024, 512
-Nkv = 512
+(B, H, N, D) = 3, 7, 1537, 111
+Nkv = 1234
 
-dtype = torch.float16
+dtype = torch.bfloat16
 ref_sdp_dtype = torch.bfloat16
 causal = False
 
@@ -69,7 +69,9 @@ if __name__ == "__main__":
     print("fwd diff:", maxdiff)
     # exit()
 
-    dO = torch.ones_like(q) 
+    dO = 0.5 + torch.rand_like(q)
+    dO[:,:,:,0] = -2
+    
     o1.backward(dO)
     o2.backward(dO)
 

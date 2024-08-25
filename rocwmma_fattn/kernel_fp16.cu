@@ -903,12 +903,23 @@ std::vector<torch::Tensor> backward_fp16(
     int Nkv_pad_sz = (Bc - (n_kv % Bc)) % Bc;
     const bool pad_mask = (Nkv_pad_sz || Nq_pad_sz || (n_kv != act_nkv));
 
+    if(permute_NH)
+    {
+        dO = torch::nn::functional::pad(dO, torch::nn::functional::PadFuncOptions({0, dO_Dpad_sz,0, 0, 0, Nq_pad_sz}));
+        Q = torch::nn::functional::pad(Q, torch::nn::functional::PadFuncOptions({0, 0,0, 0, 0, Nq_pad_sz}));
+        O = torch::nn::functional::pad(O, torch::nn::functional::PadFuncOptions({0, 0,0, 0, 0, Nq_pad_sz}));
+        L = torch::nn::functional::pad(L, torch::nn::functional::PadFuncOptions({0, Nq_pad_sz}));
+        K = torch::nn::functional::pad(K, torch::nn::functional::PadFuncOptions({0, 0,0, 0, 0, Nkv_pad_sz}));
+        V = torch::nn::functional::pad(V, torch::nn::functional::PadFuncOptions({0, 0,0, 0, 0, Nkv_pad_sz}));
+    }else{
     dO = torch::nn::functional::pad(dO, torch::nn::functional::PadFuncOptions({0, dO_Dpad_sz, 0, Nq_pad_sz}));
     Q = torch::nn::functional::pad(Q, torch::nn::functional::PadFuncOptions({0, 0, 0, Nq_pad_sz}));
     O = torch::nn::functional::pad(O, torch::nn::functional::PadFuncOptions({0, 0, 0, Nq_pad_sz}));
     L = torch::nn::functional::pad(L, torch::nn::functional::PadFuncOptions({0, Nq_pad_sz}));
     K = torch::nn::functional::pad(K, torch::nn::functional::PadFuncOptions({0, 0, 0, Nkv_pad_sz}));
     V = torch::nn::functional::pad(V, torch::nn::functional::PadFuncOptions({0, 0, 0, Nkv_pad_sz}));
+
+    }
 
     // Q = Q.contiguous();
     // K = K.contiguous();

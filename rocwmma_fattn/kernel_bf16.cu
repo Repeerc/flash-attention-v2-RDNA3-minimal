@@ -61,7 +61,6 @@ typedef float float_v16 __attribute__((ext_vector_type(16)));
 
 __device__ __forceinline__ uint16_t f32_to_bf16(float val)
 {
-    
     uint16_t res = 0;
     union
     {
@@ -93,8 +92,8 @@ __device__ void mul_add_AT_B(
     int lda, int ldb, int ldc,
     const int m, const int n, const int k, const float scale)
 {
-    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, col_major> fragA[1];
-    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[1];
+    rocwmma::fragment<matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, col_major> fragA[2];
+    rocwmma::fragment<matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType, row_major> fragB[2];
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, ComputeType> fragC;
     rocwmma::fragment<accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t> fragACC;
 
@@ -113,16 +112,16 @@ __device__ void mul_add_AT_B(
         if ((blk_x < n) && (blk_y < m))
         {
             rocwmma::fill_fragment(fragACC, (float32_t)0.0);
-            for (int i = 0; i < k; i += 1*ROCWMMA_K)
+            for (int i = 0; i < k; i += 2*ROCWMMA_K)
             {
                 rocwmma::load_matrix_sync(fragA[0], A + (i * lda + blk_y), lda); // m
                 rocwmma::load_matrix_sync(fragB[0], B + (i * ldb + blk_x), ldb); // n
 
-                // rocwmma::load_matrix_sync(fragA[1], A + ((i+ROCWMMA_K) * lda + blk_y), lda); 
-                // rocwmma::load_matrix_sync(fragB[1], B + ((i+ROCWMMA_K) * ldb + blk_x), ldb);
+                rocwmma::load_matrix_sync(fragA[1], A + ((i+ROCWMMA_K) * lda + blk_y), lda); 
+                rocwmma::load_matrix_sync(fragB[1], B + ((i+ROCWMMA_K) * ldb + blk_x), ldb);
 
                 rocwmma::mma_sync(fragACC, fragA[0], fragB[0], fragACC);
-                // rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
+                rocwmma::mma_sync(fragACC, fragA[1], fragB[1], fragACC);
             }
             rocwmma::load_matrix_sync(fragC, C + (blk_y * ldc + blk_x), ldc, rocwmma::mem_row_major); // n
             for (int i = 0; i < fragC.num_elements; ++i)
@@ -338,7 +337,7 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
         float *__restrict__ L,
         const int Tr, const int Tc, const int Br, const int Bc,
         const int nq, const int nkv,
-        const int d,const int h,
+        const int d,
         const int64_t q_stride0,const int64_t q_stride1,const int64_t q_stride2,
         const int64_t kv_stride0,const int64_t kv_stride1,const int64_t kv_stride2,
         const int L_stride_b, const int L_stride_h,
@@ -348,12 +347,14 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
     int q_offset = blockIdx.x * q_stride0 + blockIdx.y * q_stride1;
     int kv_offset = blockIdx.x * kv_stride0 + blockIdx.y * kv_stride1;
 
-    int ld_qkv = q_stride2; //d;
+    int ld_q = q_stride2; //d;
+    int ld_kv = kv_stride2;
     if(permute_NH)
     {
         q_offset = blockIdx.x * q_stride0 + blockIdx.y * q_stride2;
         kv_offset = blockIdx.x * kv_stride0 + blockIdx.y * kv_stride2;
-        ld_qkv = q_stride1; //h * d;
+        ld_q = q_stride1; //h * d;
+        ld_kv = kv_stride1;
     }
 
     const int L_offset = blockIdx.x * L_stride_b + blockIdx.y * L_stride_h;
@@ -396,7 +397,7 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
 
     __syncthreads();
 
-    ComputeType *__restrict__ Qi = &q[q_offset + (Tr_i * Br) * ld_qkv];
+    ComputeType *__restrict__ Qi = &q[q_offset + (Tr_i * Br) * ld_q];
     // ComputeType *__restrict__ Oi = &o[q_offset + Tr_i * Br * d];
 
     float32_t row_max_old = -INFINITY;
@@ -405,8 +406,8 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
     for (int j = 0; j < Tc; j++)
     {
 
-        ComputeType *__restrict__ Kj = &k[kv_offset + (j * Bc) * ld_qkv];
-        ComputeType *__restrict__ Vj = &v[kv_offset + (j * Bc) * ld_qkv];
+        ComputeType *__restrict__ Kj = &k[kv_offset + (j * Bc) * ld_kv];
+        ComputeType *__restrict__ Vj = &v[kv_offset + (j * Bc) * ld_kv];
         int ele_x = j * Bc;
         int xr = ele_x + Bc;
         float32_t row_max_new = -INFINITY; // mij
@@ -415,13 +416,13 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
         //------------ Sij = Qi @ Kj^T
         if constexpr (!causal)
         {
-            mul_A_BT<N_WAVES>(Qi, Kj, Si, ld_qkv, ld_qkv, Bc, Br, Bc, d, scale);
+            mul_A_BT<N_WAVES>(Qi, Kj, Si, ld_q, ld_kv, Bc, Br, Bc, d, scale);
         }
         else
         {
             if (ele_y >= ele_x)
             {
-                mul_A_BT<N_WAVES>(Qi, Kj, Si,ld_qkv, ld_qkv, Bc,  Br, Bc, d, scale);
+                mul_A_BT<N_WAVES>(Qi, Kj, Si,ld_q, ld_kv, Bc,  Br, Bc, d, scale);
                 __syncthreads();
             }
             if ((ele_y < ele_x + Bc - 1) && (tx < Br))
@@ -474,7 +475,7 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
             row_max_old = row_max_new;
 
 //--------------------Calc Pi = exp(Si - mi) and rowsum 
-// #pragma unroll 4
+#pragma unroll 4
             for (int i = 0; i < Bc; i += 16)
             {
                 bhalf16 val = HALF16(Si[(tx * Bc) + i]);
@@ -522,16 +523,16 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
         __syncthreads();
 
         if constexpr (!pad_mask)
-            mul_add_A_B<N_WAVES>(Si, Vj, Oi,   Bc,ld_qkv,d,   Br, d, Bc);
+            mul_add_A_B<N_WAVES>(Si, Vj, Oi,   Bc,ld_kv,d,   Br, d, Bc);
         else
         {
             if (unlikely(xr > nkv))
             {
-                mul_add_A_B_mask_k<N_WAVES>(Si, Vj, Oi,   Bc,ld_qkv,d,  Br, d, Bc, Bc - (xr - nkv));
+                mul_add_A_B_mask_k<N_WAVES>(Si, Vj, Oi,   Bc,ld_kv,d,  Br, d, Bc, Bc - (xr - nkv));
             }
             else
             {
-                mul_add_A_B<N_WAVES>(Si, Vj, Oi,   Bc,ld_qkv,d,    Br, d, Bc);
+                mul_add_A_B<N_WAVES>(Si, Vj, Oi,   Bc,ld_kv,d,    Br, d, Bc);
             }
         }
 
@@ -561,7 +562,7 @@ __launch_bounds__(WAVE_SIZE * N_WAVES)
                     val[j] =  (f32_to_bf16(val_f32[j]));
                     
                 //HALF8(Oi[(tx * d) + i]) = val;
-                HALF16((&(o[q_offset + (Tr_i * Br) * ld_qkv]))[tx * ld_qkv + i]) = val;
+                HALF16((&(o[q_offset + (Tr_i * Br) * ld_q]))[tx * ld_q + i]) = val;
             }
 
 // #pragma unroll 4
@@ -593,10 +594,10 @@ bwd_kernel(
     const int Tr, const int Tc,
     const int Br, const int Bc,
     const int nq, const int nkv,
-    const int d, const int h,
-    const int Q_O_dO_stride_0, const int Q_O_dO_stride_1, const int Q_O_dO_stride_2,
-    const int kvDkv_stride_0, const int kvdKv_stride_1, const int kvdKv_stride_2,
-    const int L_stride_b, const int L_stride_h,
+    const int d,
+    const int64_t Q_O_dO_stride_0, const int64_t Q_O_dO_stride_1, const int64_t Q_O_dO_stride_2,
+    const int64_t kvDkv_stride_0, const int64_t kvdKv_stride_1, const int64_t kvdKv_stride_2,
+    const int64_t L_stride_b, const int64_t L_stride_h,
     const float32_t scale, const bool permute_NH
     )
 
@@ -605,12 +606,14 @@ bwd_kernel(
     int q_offset = blockIdx.x * Q_O_dO_stride_0 + blockIdx.y * Q_O_dO_stride_1;
     int kv_offset = blockIdx.x * kvDkv_stride_0 + blockIdx.y * kvdKv_stride_1;
 
-    int ld_qkv = Q_O_dO_stride_2; //d;
+    int ld_q = Q_O_dO_stride_2; //d;
+    int ld_kv = kvdKv_stride_2;
     if(permute_NH)
     {
         q_offset = blockIdx.x * Q_O_dO_stride_0 + blockIdx.y * Q_O_dO_stride_2;
         kv_offset = blockIdx.x * kvDkv_stride_0 + blockIdx.y * kvdKv_stride_2;
-        ld_qkv = Q_O_dO_stride_1; //h * d;
+        ld_q = Q_O_dO_stride_1; //h * d;
+        ld_kv = kvdKv_stride_1;
     }
 
     const int L_offset = L_stride_b * blockIdx.x + L_stride_h * blockIdx.y;
@@ -627,11 +630,11 @@ bwd_kernel(
     ComputeType *__restrict__ dPi = &sram[Br * Bc];    //[Br x Bc]
     // ComputeType *__restrict__ Kj = &sram[2 * Br * Bc]; // [Bc x d]
 
-    ComputeType *__restrict__ Kj = &k[kv_offset + (Tc_j * Bc) * ld_qkv]; // [Bc x d]
-    ComputeType *__restrict__ Vj = &v[kv_offset + (Tc_j * Bc) * ld_qkv]; // [Bc x d]
+    ComputeType *__restrict__ Kj = &k[kv_offset + (Tc_j * Bc) * ld_kv]; // [Bc x d]
+    ComputeType *__restrict__ Vj = &v[kv_offset + (Tc_j * Bc) * ld_kv]; // [Bc x d]
 
-    ComputeType *__restrict__ dKj = &dK[kv_offset + (Tc_j * Bc) * ld_qkv]; // [Bc x d]
-    ComputeType *__restrict__ dVj = &dV[kv_offset + (Tc_j * Bc) * ld_qkv]; // [Bc x d]
+    ComputeType *__restrict__ dKj = &dK[kv_offset + (Tc_j * Bc) * ld_kv]; // [Bc x d]
+    ComputeType *__restrict__ dVj = &dV[kv_offset + (Tc_j * Bc) * ld_kv]; // [Bc x d]
 
     for (int n_batch = 0; n_batch < ((nq + (blockDim.x - 1)) / blockDim.x); n_batch++)
     {
@@ -642,8 +645,8 @@ bwd_kernel(
 #pragma unroll 2
             for (int i = 0; i < d; i+=16)
             {
-                bhalf16 line_16 = HALF16(dO[q_offset + Di_off * ld_qkv + i]);
-                bhalf16 line_16_2 = HALF16(O[q_offset + Di_off * ld_qkv + i]);
+                bhalf16 line_16 = HALF16(dO[q_offset + Di_off * ld_q + i]);
+                bhalf16 line_16_2 = HALF16(O[q_offset + Di_off * ld_q + i]);
                 float_v16 line_32;
                 float_v16 line_32_2;
 #pragma unroll 
@@ -674,17 +677,17 @@ bwd_kernel(
 
     for (int Tr_i = 0; Tr_i < Tr; Tr_i++)
     {
-        ComputeType *__restrict__ Qi = &q[q_offset + (Tr_i * Br) * ld_qkv];   // [Br x d]
-        ComputeType *__restrict__ Oi = &O[q_offset + (Tr_i * Br) * ld_qkv];   // [Br x d]
-        ComputeType *__restrict__ dOi = &dO[q_offset + (Tr_i * Br) * ld_qkv]; // [Br x d]
-        ComputeType *__restrict__ dQi = &dQ[q_offset + (Tr_i * Br) * ld_qkv]; // [Br x d]
+        ComputeType *__restrict__ Qi = &q[q_offset + (Tr_i * Br) * ld_q];   // [Br x d]
+        ComputeType *__restrict__ Oi = &O[q_offset + (Tr_i * Br) * ld_q];   // [Br x d]
+        ComputeType *__restrict__ dOi = &dO[q_offset + (Tr_i * Br) * ld_q]; // [Br x d]
+        ComputeType *__restrict__ dQi = &dQ[q_offset + (Tr_i * Br) * ld_q]; // [Br x d]
         float32_t *__restrict__ Li = &L[L_offset + Tr_i * Br];         // [Br]
         float32_t *__restrict__ Di_i = &Di[L_offset + Tr_i * Br];
         int ele_y = Tr_i * Br;
         int yb = ele_y + Br;
         int xr = ele_x + Bc;
 
-        mul_A_BT<N_WAVES>(Qi, Kj, Si,  ld_qkv,ld_qkv,Bc,   Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
+        mul_A_BT<N_WAVES>(Qi, Kj, Si,  ld_q,ld_kv, Bc,   Br, Bc, d, scale); // Qi[Br x d] Kj[Bc x d]
         __syncthreads();
         if constexpr (causal)
         {
@@ -752,8 +755,8 @@ bwd_kernel(
         }
         __syncthreads();
 
-        mul_add_AT_B<N_WAVES>(Pi, dOi, dVj,Bc,ld_qkv,ld_qkv,    Bc, d, Br, 1); // Pi[Br x Bc] @ dOi[Br x d]
-        mul_A_BT<N_WAVES>(dOi, Vj, dPi,ld_qkv,ld_qkv,  Bc,     Br, Bc, d, 1);  // dPi:[Br x Bc]
+        mul_add_AT_B<N_WAVES>(Pi, dOi, dVj,Bc,ld_q,ld_kv,    Bc, d, Br, 1); // Pi[Br x Bc] @ dOi[Br x d]
+        mul_A_BT<N_WAVES>(dOi, Vj, dPi,ld_q,ld_kv,  Bc,     Br, Bc, d, 1);  // dPi:[Br x Bc]
         __syncthreads();
         if (tx < Br)
         {
@@ -788,8 +791,8 @@ bwd_kernel(
 //             }
         }
         __syncthreads();
-        mul_add_A_B<N_WAVES>(dSi, Kj, dQi, Bc, ld_qkv,  ld_qkv,  Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
-        mul_add_AT_B<N_WAVES>(dSi, Qi, dKj, Bc, ld_qkv,  ld_qkv,  Bc, d, Br, 0.69314718f); // dSi[Br x Bc] @ Qi[Br x d]
+        mul_add_A_B<N_WAVES>(dSi, Kj, dQi, Bc, ld_kv,  ld_q,  Br, d, Bc);  // dSi[Br x Bc] @ Kj[Bc x d]
+        mul_add_AT_B<N_WAVES>(dSi, Qi, dKj, Bc, ld_q,  ld_kv,  Bc, d, Br, 0.69314718f); // dSi[Br x Bc] @ Qi[Br x d]
         __syncthreads();
     }
 }
@@ -832,8 +835,8 @@ std::vector<torch::Tensor> forward_bf16(
     // if (Nkv_pad_sz || d_pad_sz)
     if (d_pad_sz)
     {
-        k_pad = torch::nn::functional::pad(k_pad, torch::nn::functional::PadFuncOptions({0, d_pad_sz, 0, 0}));
-        v_pad = torch::nn::functional::pad(v_pad, torch::nn::functional::PadFuncOptions({0, d_pad_sz, 0, 0}));
+        k_pad = torch::nn::functional::pad(k_pad, torch::nn::functional::PadFuncOptions({0, d_pad_sz}));
+        v_pad = torch::nn::functional::pad(v_pad, torch::nn::functional::PadFuncOptions({0, d_pad_sz}));
     }
     if (q_pad.stride(-1) != 1)
         q_pad = q_pad.contiguous();
@@ -844,8 +847,8 @@ std::vector<torch::Tensor> forward_bf16(
     if (v_pad.stride(-1) != 1)
         v_pad = v_pad.contiguous();
 
-    const int Tr = ceil((float)n / Br);
-    const int Tc = ceil((float)n_kv / Bc);
+    const int Tr = ceil((float)(n+Nq_pad_sz) / Br);
+    const int Tc = ceil((float)(n_kv+Nkv_pad_sz) / Bc);
 
     // auto opt = torch::TensorOptions().dtype(TORCH_DTYPE).device(torch::kCUDA);
     auto O = torch::zeros_like(q_pad);
@@ -861,7 +864,7 @@ std::vector<torch::Tensor> forward_bf16(
     int nblk = b * h * Tr;
     int trPad = 96 - (nblk % 96); // TODO: 96 CU only for gfx1100
 
-    auto gridDim = dim3(b, h, Tr + 0);
+    auto gridDim = dim3(b, h, Tr + trPad);
 
     const int sram_sz =
         Br * Bc * sizeof(ComputeType)               // Si
@@ -877,8 +880,8 @@ std::vector<torch::Tensor> forward_bf16(
         (ComputeType *)O.data_ptr<AT_PTR_TYPE>(),     \
         (float *)L.data_ptr<float>(),                 \
         Tr, Tc, Br, Bc,                               \
-        n, n_kv,                                      \
-        d + d_pad_sz, h,                              \
+        n + Nq_pad_sz, n_kv + Nkv_pad_sz,             \
+        d + d_pad_sz,                                 \
         q_pad.stride(0),q_pad.stride(1),q_pad.stride(2),\
         k_pad.stride(0),k_pad.stride(1),k_pad.stride(2),\
         L.stride(0), L.stride(1),                     \
@@ -1002,12 +1005,12 @@ std::vector<torch::Tensor> backward_bf16(
 
     auto Di = torch::zeros_like(L);
 
-    constexpr int NW = 32;
+    constexpr int NWAVE = 32;
 
     int nblk = b * h * Tc;
     int tcPad = 96 - (nblk % 96); // TODO: 96 CU only for gfx1100
-    auto gridDim = dim3(b, h, Tc + 0);
-    auto blockDim = dim3(WAVE_SIZE * NW);
+    auto gridDim = dim3(b, h, Tc + tcPad);
+    auto blockDim = dim3(WAVE_SIZE * NWAVE);
 
     const int sram_sz =
         2 * Br * Bc * sizeof(ComputeType) // (Si,Pi,dSi), dPi
@@ -1030,7 +1033,7 @@ std::vector<torch::Tensor> backward_bf16(
         Tr, Tc, \
         Br, Bc, \
         act_n, act_nkv, \
-        d, h, \
+        d, \
         Q.stride(0), Q.stride(1), Q.stride(2), \
         K.stride(0), K.stride(1), K.stride(2), \
         L.stride(0), L.stride(1), \
@@ -1038,13 +1041,13 @@ std::vector<torch::Tensor> backward_bf16(
 
  
     if (!pad_mask && !causal)
-        bwd_kernel<false, false,NW><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
+        bwd_kernel<false, false,NWAVE><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
     else if (pad_mask && causal)
-        bwd_kernel<true, true,NW><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
+        bwd_kernel<true, true,NWAVE><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
     else if (!pad_mask && causal)
-        bwd_kernel<false, true,NW><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
+        bwd_kernel<false, true,NWAVE><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
     else if (pad_mask && !causal)
-        bwd_kernel<true, false,NW><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
+        bwd_kernel<true, false,NWAVE><<<gridDim, blockDim, sram_sz>>>(bwd_parm);
 
     err = cudaGetLastError();
     if (err != hipSuccess)
